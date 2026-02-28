@@ -2,23 +2,35 @@ const WebSocket = require('ws');
 const http = require('http');
 
 const PORT = process.env.PORT || 8080;
-// PASTE YOUR ZAPIER URL HERE
-const ZAPIER_WEBHOOK_URL = "https://hooks.zapier.com/hooks/catch/26634868/u0iagvf/; 
+const ZAPIER_WEBHOOK_URL = "https://hooks.zapier.com/hooks/catch/26634868/u0iagvf/"; 
 
 const server = http.createServer((req, res) => {
+  // 1. THIS REPLACES BASE44 - Twilio hits this URL first
+  if (req.url === '/twilio-hook') {
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+      <Response>
+        <Connect>
+          <Stream url="wss://${req.headers.host}" />
+        </Connect>
+        <Pause length="40" />
+      </Response>`;
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(twiml);
+    return;
+  }
+
+  // 2. HEALTH CHECK - Keeps Railway alive
   if (req.url === '/health' || req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('ALIVE');
     return;
   }
-  res.writeHead(404);
-  res.end();
 });
 
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (twilioWs) => {
-  console.log('--- [Twilio] Connected ---');
+  console.log('--- [Twilio] Voice Stream Connected ---');
   let dgWs = null;
   let streamSid = null;
   let callStartTime = Date.now();
@@ -28,7 +40,6 @@ wss.on('connection', (twilioWs) => {
       const msg = JSON.parse(data);
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
-        console.log('--- [Twilio] Stream Started: ' + streamSid);
         const apiKey = process.env.DEEPGRAM_API_KEY;
         dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse?token=' + apiKey);
 
@@ -55,19 +66,16 @@ wss.on('connection', (twilioWs) => {
       }
 
       if (msg.event === 'media' && dgWs && dgWs.readyState === 1) {
-        const audioBuffer = Buffer.from(msg.media.payload, 'base64');
-        dgWs.send(audioBuffer);
+        dgWs.send(Buffer.from(msg.media.payload, 'base64'));
       }
-    } catch (e) {
-      console.error('Error:', e.message);
-    }
+    } catch (e) { console.error('Error:', e.message); }
   });
 
   twilioWs.on('close', async () => {
-    console.log('--- [Twilio] Closed ---');
+    console.log('--- [Twilio] Call Ended ---');
     if (dgWs) dgWs.close();
 
-    // TRIGGER ZAPIER
+    // 3. ZAPIER TRIGGER - Happens ONLY after the call ends
     try {
       await fetch(ZAPIER_WEBHOOK_URL, {
         method: 'POST',
@@ -75,14 +83,11 @@ wss.on('connection', (twilioWs) => {
         body: JSON.stringify({
           status: "completed",
           streamSid: streamSid,
-          duration_seconds: Math.floor((Date.now() - callStartTime) / 1000),
-          timestamp: new Date().toISOString()
+          duration: Math.floor((Date.now() - callStartTime) / 1000) + " seconds"
         })
       });
-      console.log("--- [Zapier] Success ---");
-    } catch (err) {
-      console.error("Zapier Webhook Failed:", err.message);
-    }
+      console.log("--- [Zapier] Lead data sent! ---");
+    } catch (err) { console.error("Zapier failed:", err.message); }
   });
 });
 
