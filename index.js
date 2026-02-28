@@ -7,10 +7,10 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Initialize Base44 with your Service Role Key
+// EXTERNAL SDK CONFIG: Fetching prompt/updating DB as Admin
 const base44 = createClient({
-  apiKey: process.env.BASE44_SERVICE_KEY,
-  serverUrl: 'https://api.base44.app'
+  appId: process.env.BASE44_APP_ID,
+  token: process.env.BASE44_ADMIN_TOKEN, // Your Admin API Key
 });
 
 wss.on('connection', async (ws, req) => {
@@ -18,7 +18,7 @@ wss.on('connection', async (ws, req) => {
   const campaignId = params.get('c');
   const leadId = params.get('l');
 
-  console.log(`📞 Connection: Campaign ${campaignId} | Lead ${leadId}`);
+  console.log(`[Railway] New Call: Campaign ${campaignId}, Lead ${leadId}`);
 
   let dgWs = null;
   let streamSid = null;
@@ -26,27 +26,26 @@ wss.on('connection', async (ws, req) => {
   let fullTranscript = "";
 
   try {
-    // 1. Fetch Config from Base44
-    const [campaign] = await base44.asServiceRole.entities.Campaign.filter({ id: campaignId });
-    const [lead] = await base44.asServiceRole.entities.Lead.filter({ id: leadId });
+    // 1. Fetch Campaign data from Base44 (Internal Fetch)
+    const [campaign] = await base44.entities.Campaign.filter({ id: campaignId });
+    const [lead] = await base44.entities.Lead.filter({ id: leadId });
 
-    if (!campaign) throw new Error("Campaign not found");
+    if (!campaign) throw new Error("Campaign record missing");
 
     ws.on('message', async (message) => {
       const msg = JSON.parse(message);
 
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
-        console.log(`🚀 Stream Started: ${streamSid}`);
-
-        // Find and tag the CallLog
-        const logs = await base44.asServiceRole.entities.CallLog.filter({ twilio_call_sid: streamSid });
+        
+        // Link to the CallLog record created by Base44
+        const logs = await base44.entities.CallLog.filter({ twilio_call_sid: streamSid });
         if (logs[0]) {
           callLogId = logs[0].id;
-          await base44.asServiceRole.entities.CallLog.update(callLogId, { status: 'in_progress' });
+          await base44.entities.CallLog.update(callLogId, { status: 'in_progress' });
         }
 
-        // 2. Connect to Deepgram Voice Agent (Flux)
+        // 2. Open Deepgram Voice Agent (Flux)
         dgWs = new WebSocket(`wss://agent.deepgram.com/v1/agent/converse?token=${process.env.DEEPGRAM_API_KEY}`);
 
         dgWs.on('open', () => {
@@ -59,7 +58,7 @@ wss.on('connection', async (ws, req) => {
             agent: {
               think: {
                 provider: { type: campaign.llm_provider || 'open_ai', model: campaign.llm_model || 'gpt-4o-mini' },
-                instructions: campaign.agent_prompt
+                instructions: campaign.agent_prompt 
               },
               speak: { model: campaign.agent_voice || 'aura-2-thalia-en' }
             }
@@ -67,7 +66,7 @@ wss.on('connection', async (ws, req) => {
         });
 
         dgWs.on('message', async (data) => {
-          // Handle Audio Data
+          // Audio Data -> Send to Twilio
           if (Buffer.isBuffer(data) && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
               event: 'media',
@@ -76,8 +75,8 @@ wss.on('connection', async (ws, req) => {
             }));
           }
 
-          // Handle JSON Data (Transcripts & Tools)
-          if (typeof data === 'string' || data instanceof String) {
+          // JSON Data -> Update Transcript & Handle Tools
+          if (typeof data === 'string') {
             const response = JSON.parse(data);
 
             if (response.type === 'UtteranceEnd') {
@@ -86,16 +85,18 @@ wss.on('connection', async (ws, req) => {
               fullTranscript += `${role} ${text}\n`;
               
               if (callLogId) {
-                base44.asServiceRole.entities.CallLog.update(callLogId, { live_transcript: fullTranscript });
+                // Update live transcript in Base44
+                base44.entities.CallLog.update(callLogId, { live_transcript: fullTranscript });
               }
             }
 
+            // TOOL CALL: Book Appointment
             if (response.type === 'FunctionCall' && response.name === 'book_appointment') {
-              await base44.asServiceRole.entities.Appointment.create({
+              await base44.entities.Appointment.create({
                 lead_id: leadId,
                 campaign_id: campaignId,
-                lead_name: `${lead?.first_name || 'Lead'} ${lead?.last_name || ''}`,
-                lead_phone: lead?.phone || 'Unknown',
+                lead_name: `${lead?.first_name || 'Lead'}`,
+                lead_phone: lead?.phone || '',
                 scheduled_date: response.parameters.date,
                 scheduled_time: response.parameters.time,
                 status: 'scheduled'
@@ -106,16 +107,16 @@ wss.on('connection', async (ws, req) => {
         });
       }
 
+      // Incoming audio from Twilio -> Send to Deepgram
       if (msg.event === 'media' && dgWs?.readyState === WebSocket.OPEN) {
         dgWs.send(Buffer.from(msg.media.payload, 'base64'));
       }
     });
 
     ws.on('close', async () => {
-      console.log("⏹️ Call Ended");
       if (dgWs) dgWs.close();
       if (callLogId) {
-        await base44.asServiceRole.entities.CallLog.update(callLogId, { 
+        await base44.entities.CallLog.update(callLogId, { 
           status: 'completed', 
           transcript: fullTranscript,
           ended_at: new Date().toISOString()
@@ -124,10 +125,9 @@ wss.on('connection', async (ws, req) => {
     });
 
   } catch (err) {
-    console.error("❌ Fatal Error:", err.message);
+    console.error("Critical Failure:", err.message);
     ws.close();
   }
 });
 
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, '0.0.0.0', () => console.log(`Engine live on port ${PORT}`));
+server.listen(process.env.PORT || 8080, '0.0.0.0', () => console.log("Audio Engine Online"));
