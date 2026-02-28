@@ -2,16 +2,16 @@ import express from 'express';
 import http from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createClient } from '@base44/sdk';
-import fetch from 'node-fetch'; // Required for the Deepgram ping in Node.js
+import fetch from 'node-fetch';
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 /**
- * 1. RAILWAY HEALTHCHECK ENDPOINT
- * Satisfies Railway's deployment monitor and your frontend dashboard.
- * It checks internal state and external connectivity to Deepgram.
+ * 1. RAILWAY & BASE44 HEALTHCHECK
+ * This satisfies Railway's "Service Unavailable" error and 
+ * provides the Deepgram diagnostic data to your dashboard.
  */
 app.get('/health', async (req, res) => {
   const start = Date.now();
@@ -20,10 +20,10 @@ app.get('/health', async (req, res) => {
   try {
     const apiKey = process.env.DEEPGRAM_API_KEY;
     if (!apiKey) {
-      throw new Error("DEEPGRAM_API_KEY is missing from Project Secrets.");
+      throw new Error("DEEPGRAM_API_KEY is missing from Railway Variables.");
     }
 
-    // Ping Deepgram to ensure the key is valid and the API is reachable
+    // Ping Deepgram (logic from your Checkdeepgram.ts)
     const dgRes = await fetch('https://api.deepgram.com/v1/projects', {
       method: 'GET',
       headers: { 
@@ -44,8 +44,7 @@ app.get('/health', async (req, res) => {
     deepgramStatus.error = error.message;
   }
 
-  // Always return 200 so Railway knows the SERVICE is up, 
-  // even if the Deepgram API connection has an issue.
+  // Return 200 so Railway marks the deployment as "Healthy"
   res.status(200).json({
     status: 'ok',
     engine: 'active',
@@ -54,14 +53,16 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// 2. Initialize Base44 Client
+/**
+ * 2. INITIALIZE BASE44 CLIENT
+ */
 const base44 = createClient({
   appId: process.env.BASE44_APP_ID, 
   token: process.env.BASE44_ADMIN_TOKEN, 
 });
 
 /**
- * 3. WEBSOCKET VOICE ENGINE
+ * 3. VOICE ENGINE (WEBSOCKET)
  */
 wss.on('connection', async (ws, req) => {
   const params = new URLSearchParams(req.url.split('?')[1]);
@@ -87,7 +88,7 @@ wss.on('connection', async (ws, req) => {
         const logs = await base44.entities.CallLog.filter({ twilio_call_sid: streamSid });
         if (logs[0]) {
           callLogId = logs[0].id;
-          await base44.entities.CallLog.update(callLogId, { status: 'in_progress' });
+          await base44.asServiceRole.entities.CallLog.update(callLogId, { status: 'in_progress' });
         }
 
         dgWs = new WebSocket(`wss://agent.deepgram.com/v1/agent/converse?token=${process.env.DEEPGRAM_API_KEY}`);
@@ -118,7 +119,7 @@ wss.on('connection', async (ws, req) => {
             if (response.type === 'UtteranceEnd') {
               const text = response.channel.alternatives[0].transcript;
               fullTranscript += `${response.is_final ? "[agent]" : "[user]"} ${text}\n`;
-              if (callLogId) base44.entities.CallLog.update(callLogId, { live_transcript: fullTranscript });
+              if (callLogId) base44.asServiceRole.entities.CallLog.update(callLogId, { live_transcript: fullTranscript });
             }
           }
         });
@@ -131,15 +132,15 @@ wss.on('connection', async (ws, req) => {
 
     ws.on('close', async () => {
       if (dgWs) dgWs.close();
-      if (callLogId) await base44.entities.CallLog.update(callLogId, { status: 'completed', transcript: fullTranscript });
+      if (callLogId) await base44.asServiceRole.entities.CallLog.update(callLogId, { status: 'completed', transcript: fullTranscript });
     });
   } catch (err) {
-    console.error("WebSocket Error:", err.message);
+    console.error("Error:", err.message);
     ws.close();
   }
 });
 
-// LISTEN ON 0.0.0.0 is mandatory for Railway networking
+// MANDATORY: Listen on 0.0.0.0 for Railway networking
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Railway] Audio Engine & Healthcheck live on port ${PORT}`);
