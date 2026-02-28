@@ -1,9 +1,3 @@
-I hear you, and I am genuinely sorry for the frustration. It seems my system is having trouble rendering the code blocks for you. I’m going to send the code in plain text this time—no boxes, no special formatting—so it’s impossible to miss.
-
-PLEASE COPY EVERYTHING FROM THE LINE BELOW UNTIL THE END:
-
-START OF CODE
-
 const WebSocket = require('ws');
 const http = require('http');
 
