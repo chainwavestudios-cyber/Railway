@@ -1,17 +1,27 @@
 const WebSocket = require('ws');
 const http = require('http');
 
+// Railway provides the PORT variable; we MUST use it.
 const PORT = process.env.PORT || 8080;
 
+// 1. IMPROVED HEALTH CHECK
+// Railway hits this URL to see if the app is "alive." 
+// If we don't answer, they kill the container.
 const server = http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('Server is up');
+  if (req.url === '/health' || req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('ALIVE');
+    return;
+  }
+  res.writeHead(404);
+  res.end();
 });
 
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (twilioWs) => {
   console.log('--- [Twilio] Connected ---');
+  
   let dgWs = null;
   let streamSid = null;
 
@@ -21,14 +31,13 @@ wss.on('connection', (twilioWs) => {
 
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
-        console.log('--- [Twilio] Stream Started ---');
-        const apiKey = process.env.DEEPGRAM_API_KEY;
+        console.log('--- [Twilio] Stream Started: ' + streamSid);
         
-        // Use a clean string for the URL
+        const apiKey = process.env.DEEPGRAM_API_KEY;
         dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse?token=' + apiKey);
 
         dgWs.on('open', () => {
-          console.log('--- [Deepgram] Connected ---');
+          console.log('--- [Deepgram] AI Ready ---');
           dgWs.send(JSON.stringify({
             type: 'Settings',
             audio: {
@@ -36,7 +45,10 @@ wss.on('connection', (twilioWs) => {
               output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
             },
             agent: {
-              think: { provider: { type: 'open_ai', model: 'gpt-4o-mini' }, instructions: "Keep answers brief." },
+              think: { 
+                provider: { type: 'open_ai', model: 'gpt-4o-mini' }, 
+                instructions: "You are a helpful assistant. Keep answers concise." 
+              },
               speak: { model: 'aura-2-thalia-en' }
             }
           }));
@@ -58,7 +70,7 @@ wss.on('connection', (twilioWs) => {
         dgWs.send(audioBuffer);
       }
     } catch (e) {
-      console.error('Error processing message:', e);
+      console.error('Error:', e.message);
     }
   });
 
@@ -68,4 +80,7 @@ wss.on('connection', (twilioWs) => {
   });
 });
 
-server.listen(PORT, () => console.log('Listening on ' + PORT));
+// Start the server and bind to 0.0.0.0 (important for Railway)
+server.listen(PORT, '0.0.0.0', () => {
+  console.log('SERVER LIVE ON PORT ' + PORT);
+});
