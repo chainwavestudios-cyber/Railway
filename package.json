@@ -1,11 +1,15 @@
 {
   "name": "voice-agent-railway",
   "version": "1.0.0",
+  "type": "module",
   "main": "index.js",
-  "dependencies": {
-    "ws": "^8.18.0"
-  },
   "scripts": {
     "start": "node index.js"
+  },
+  "dependencies": {
+    "@base44/sdk": "^0.8.18",
+    "express": "^4.18.2",
+    "node-fetch": "^2.6.9",
+    "ws": "^8.18.0"
   }
 }
