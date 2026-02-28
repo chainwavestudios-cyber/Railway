@@ -1,60 +1,55 @@
-const WebSocket = require('ws');
-const http = require('http');
+import express from 'express';
+import http from 'http';
+import { WebSocket, WebSocketServer } from 'ws';
+import { createClient } from '@base44/sdk';
 
-const PORT = process.env.PORT || 8080;
-const ZAPIER_WEBHOOK_URL = "https://hooks.zapier.com/hooks/catch/26634868/u0iagvf/";
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
-const server = http.createServer((req, res) => {
-  // 1. REPLACES BASE44: Twilio hits this URL for instructions
-  if (req.url.startsWith('/twilio-hook')) {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const campaignId = url.searchParams.get("c") || "default";
-    
-    // We pass the campaignId into the WebSocket URL so the AI knows which campaign this is
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-      <Response>
-        <Connect>
-          <Stream url="wss://${req.headers.host}/?c=${campaignId}" />
-        </Connect>
-        <Pause length="40" />
-      </Response>`;
-    
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end(twiml);
-    return;
-  }
-
-  // 2. HEALTH CHECK: Keeps Railway from killing the container
-  if (req.url === '/health' || req.url === '/') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('ALIVE');
-    return;
-  }
+// Initialize Base44 with your Service Role Key
+const base44 = createClient({
+  apiKey: process.env.BASE44_SERVICE_KEY,
+  serverUrl: 'https://api.base44.app'
 });
 
-const wss = new WebSocket.Server({ server });
+wss.on('connection', async (ws, req) => {
+  const params = new URLSearchParams(req.url.split('?')[1]);
+  const campaignId = params.get('c');
+  const leadId = params.get('l');
 
-wss.on('connection', (twilioWs, req) => {
-  console.log('--- [Twilio] Connected ---');
-  
-  // Extract Campaign ID from the WebSocket URL
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const campaignId = url.searchParams.get("c") || "unknown";
+  console.log(`📞 Connection: Campaign ${campaignId} | Lead ${leadId}`);
 
   let dgWs = null;
   let streamSid = null;
-  let callStartTime = Date.now();
+  let callLogId = null;
+  let fullTranscript = "";
 
-  twilioWs.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data);
+  try {
+    // 1. Fetch Config from Base44
+    const [campaign] = await base44.asServiceRole.entities.Campaign.filter({ id: campaignId });
+    const [lead] = await base44.asServiceRole.entities.Lead.filter({ id: leadId });
+
+    if (!campaign) throw new Error("Campaign not found");
+
+    ws.on('message', async (message) => {
+      const msg = JSON.parse(message);
+
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
-        const apiKey = process.env.DEEPGRAM_API_KEY;
-        dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse?token=' + apiKey);
+        console.log(`🚀 Stream Started: ${streamSid}`);
+
+        // Find and tag the CallLog
+        const logs = await base44.asServiceRole.entities.CallLog.filter({ twilio_call_sid: streamSid });
+        if (logs[0]) {
+          callLogId = logs[0].id;
+          await base44.asServiceRole.entities.CallLog.update(callLogId, { status: 'in_progress' });
+        }
+
+        // 2. Connect to Deepgram Voice Agent (Flux)
+        dgWs = new WebSocket(`wss://agent.deepgram.com/v1/agent/converse?token=${process.env.DEEPGRAM_API_KEY}`);
 
         dgWs.on('open', () => {
-          console.log(`--- [Deepgram] AI Ready (Campaign: ${campaignId}) ---`);
           dgWs.send(JSON.stringify({
             type: 'Settings',
             audio: {
@@ -62,45 +57,77 @@ wss.on('connection', (twilioWs, req) => {
               output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
             },
             agent: {
-              think: { provider: { type: 'open_ai', model: 'gpt-4o-mini' }, instructions: "You are a helpful assistant. Keep answers concise." },
-              speak: { model: 'aura-2-thalia-en' }
+              think: {
+                provider: { type: campaign.llm_provider || 'open_ai', model: campaign.llm_model || 'gpt-4o-mini' },
+                instructions: campaign.agent_prompt
+              },
+              speak: { model: campaign.agent_voice || 'aura-2-thalia-en' }
             }
           }));
         });
 
-        dgWs.on('message', (dgData) => {
-          if (dgData instanceof Buffer && twilioWs.readyState === 1) {
-            twilioWs.send(JSON.stringify({ event: 'media', streamSid: streamSid, media: { payload: dgData.toString('base64') } }));
+        dgWs.on('message', async (data) => {
+          // Handle Audio Data
+          if (Buffer.isBuffer(data) && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              event: 'media',
+              streamSid,
+              media: { payload: data.toString('base64') }
+            }));
+          }
+
+          // Handle JSON Data (Transcripts & Tools)
+          if (typeof data === 'string' || data instanceof String) {
+            const response = JSON.parse(data);
+
+            if (response.type === 'UtteranceEnd') {
+              const text = response.channel.alternatives[0].transcript;
+              const role = response.is_final ? "[agent]" : "[user]";
+              fullTranscript += `${role} ${text}\n`;
+              
+              if (callLogId) {
+                base44.asServiceRole.entities.CallLog.update(callLogId, { live_transcript: fullTranscript });
+              }
+            }
+
+            if (response.type === 'FunctionCall' && response.name === 'book_appointment') {
+              await base44.asServiceRole.entities.Appointment.create({
+                lead_id: leadId,
+                campaign_id: campaignId,
+                lead_name: `${lead?.first_name || 'Lead'} ${lead?.last_name || ''}`,
+                lead_phone: lead?.phone || 'Unknown',
+                scheduled_date: response.parameters.date,
+                scheduled_time: response.parameters.time,
+                status: 'scheduled'
+              });
+              dgWs.send(JSON.stringify({ type: 'FunctionResponse', call_id: response.call_id, output: "Success" }));
+            }
           }
         });
       }
-      if (msg.event === 'media' && dgWs && dgWs.readyState === 1) {
+
+      if (msg.event === 'media' && dgWs?.readyState === WebSocket.OPEN) {
         dgWs.send(Buffer.from(msg.media.payload, 'base64'));
       }
-    } catch (e) { console.error('Error:', e.message); }
-  });
+    });
 
-  twilioWs.on('close', async () => {
-    console.log('--- [Twilio] Closed ---');
-    if (dgWs) dgWs.close();
-    
-    // 3. ZAPIER: Send the data only when the call is finished
-    try {
-      await fetch(ZAPIER_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          status: "completed", 
-          campaignId: campaignId,
-          streamSid: streamSid, 
-          duration: Math.floor((Date.now() - callStartTime) / 1000) + "s"
-        })
-      });
-      console.log("--- [Zapier] Success ---");
-    } catch (err) { console.error("Zapier error:", err.message); }
-  });
+    ws.on('close', async () => {
+      console.log("⏹️ Call Ended");
+      if (dgWs) dgWs.close();
+      if (callLogId) {
+        await base44.asServiceRole.entities.CallLog.update(callLogId, { 
+          status: 'completed', 
+          transcript: fullTranscript,
+          ended_at: new Date().toISOString()
+        });
+      }
+    });
+
+  } catch (err) {
+    console.error("❌ Fatal Error:", err.message);
+    ws.close();
+  }
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log('SERVER LIVE ON PORT ' + PORT);
-});
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, '0.0.0.0', () => console.log(`Engine live on port ${PORT}`));
