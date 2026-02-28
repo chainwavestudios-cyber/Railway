@@ -3,15 +3,14 @@ const http = require('http');
 
 const PORT = process.env.PORT || 8080;
 
-// 1. Handle the Health Check Railway is asking for
+// 1. IMPROVED HEALTH CHECK - Answers 'ALIVE' to everything that isn't a WebSocket
 const server = http.createServer((req, res) => {
-  if (req.url === '/health' || req.url === '/') {
+  // If it's not a WebSocket upgrade, just say we are alive
+  if (req.headers.get && req.headers.get('upgrade') !== 'websocket') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('ALIVE');
     return;
   }
-  res.writeHead(404);
-  res.end();
 });
 
 const wss = new WebSocket.Server({ server });
@@ -27,7 +26,13 @@ wss.on('connection', (twilioWs) => {
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
         console.log('--- [Twilio] Stream Started ---');
+        
         const apiKey = process.env.DEEPGRAM_API_KEY;
+        if (!apiKey) {
+          console.error("CRITICAL: DEEPGRAM_API_KEY is missing!");
+          return;
+        }
+
         dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse?token=' + apiKey);
 
         dgWs.on('open', () => {
@@ -47,13 +52,11 @@ wss.on('connection', (twilioWs) => {
 
         dgWs.on('message', (dgData) => {
           if (dgData instanceof Buffer && twilioWs.readyState === 1) {
-            twilioWs.send(JSON.stringify({ 
-              event: 'media', 
-              streamSid: streamSid, 
-              media: { payload: dgData.toString('base64') } 
-            }));
+            twilioWs.send(JSON.stringify({ event: 'media', streamSid: streamSid, media: { payload: dgData.toString('base64') } }));
           }
         });
+
+        dgWs.on('error', (err) => console.error('Deepgram Error:', err));
       }
 
       if (msg.event === 'media' && dgWs && dgWs.readyState === 1) {
@@ -61,7 +64,7 @@ wss.on('connection', (twilioWs) => {
         dgWs.send(audioBuffer);
       }
     } catch (e) {
-      console.error('Error:', e);
+      console.error('Processing Error:', e);
     }
   });
 
@@ -71,7 +74,7 @@ wss.on('connection', (twilioWs) => {
   });
 });
 
-// Start the server on 0.0.0.0
+// Bind to 0.0.0.0
 server.listen(PORT, '0.0.0.0', () => {
   console.log('SERVER LIVE ON PORT ' + PORT);
 });
