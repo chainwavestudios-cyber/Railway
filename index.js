@@ -1,36 +1,22 @@
-const WebSocket = require('ws');
-const http = require('http');
-
-// Railway provides the PORT automatically
-const PORT = process.env.PORT || 8080;
-
-// 1. HTTP Server: This tells Twilio to start the audio stream
-const server = http.createServer((req, res) => {
-console.log('Twilio request received');
-
-const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Connect><Stream url="wss://' + req.headers.host + '" /></Connect><Pause length="40" /></Response>';
-
-res.writeHead(200, { 'Content-Type': 'text/xml' });
-res.end(twiml);
-});
-
-// 2. WebSocket Server: This handles the actual voice data
-const wss = new WebSocket.Server({ server });
-
-wss.on('connection', (twilioWs) => {
-console.log('--- [Twilio] Call Connected ---');
-let dgWs = null;
-let streamSid = null;
-
-twilioWs.on('message', async (data) => {
 const msg = JSON.parse(data);
-
+if (msg.event === 'start') {
+streamSid = msg.start.streamSid;
+const apiKey = process.env.DEEPGRAM_API_KEY;
+dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse?token=' + apiKey);
+dgWs.on('open', () => {
+dgWs.send(JSON.stringify({
+type: 'Settings',
+audio: { input: { encoding: 'mulaw', sample_rate: 8000 }, output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' } },
+agent: { think: { provider: { type: 'open_ai', model: 'gpt-4o-mini' }, instructions: 'Keep answers brief.' }, speak: { model: 'aura-2-thalia-en' } }
+}));
 });
-
-twilioWs.on('close', () => {
-console.log('--- [Twilio] Call Ended ---');
-if (dgWs) dgWs.close();
+dgWs.on('message', (dgData) => {
+if (dgData instanceof Buffer && twilioWs.readyState === 1) {
+twilioWs.send(JSON.stringify({ event: 'media', streamSid: streamSid, media: { payload: dgData.toString('base64') } }));
+}
 });
-});
-
-server.listen(PORT, () => console.log('Server is live on port ' + PORT));
+}
+if (msg.event === 'media' && dgWs && dgWs.readyState === 1) {
+const audioBuffer = Buffer.from(msg.media.payload, 'base64');
+dgWs.send(audioBuffer);
+}
