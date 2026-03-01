@@ -48,7 +48,6 @@ wss.on("connection", (clientWs, req) => {
         });
 
         dgWs.on("error", (e) => console.error("❌ Deepgram Error:", e.message));
-
         dgWs.on("close", (code, reason) => {
           console.log(`🔌 Deepgram closed: ${code}`, reason?.toString());
           if (keepAliveInterval) clearInterval(keepAliveInterval);
@@ -62,11 +61,10 @@ wss.on("connection", (clientWs, req) => {
             if (dgWs.readyState === WebSocket.OPEN) dgWs.send(JSON.stringify({ type: "KeepAlive" }));
           }, 5000);
 
-          // Send tiny silent audio chunk to initialize session
-          const silence = Buffer.alloc(320, 0); // ~20ms at 8kHz mulaw
-          dgWs.send(silence);
+          // tiny silent audio chunk to initialize connection
+          dgWs.send(Buffer.alloc(320, 0));
 
-          // Send settings + script
+          // Send agent settings + SDR script
           dgWs.send(JSON.stringify({
             type: "Settings",
             audio: {
@@ -193,10 +191,8 @@ Only book when clear agreement exists.
            HANDLE DEEPGRAM RESPONSES
         ----------------------------- */
         dgWs.on("message", async (data, isBinary) => {
-          if (isBinary) {
-            if (clientWs.readyState === WebSocket.OPEN && streamSid) {
-              clientWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: data.toString("base64") } }));
-            }
+          if (isBinary && clientWs.readyState === WebSocket.OPEN && streamSid) {
+            clientWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: data.toString("base64") } }));
             return;
           }
 
@@ -225,7 +221,9 @@ Only book when clear agreement exists.
                   },
                 }),
               });
-            } catch (err) { console.error("Sync Error:", err); }
+            } catch (err) {
+              console.error("Sync Error:", err);
+            }
 
             dgWs.send(JSON.stringify({
               type: "FunctionCallResponse",
