@@ -33,7 +33,7 @@ wss.on('connection', (ws, req) => {
         console.log(`📞 Stream started: ${streamSid}`);
 
         // 1. WebSocket connection using Header Auth
-        dgWs = new WebSocket('wss://api.deepgram.com/v1/agent/converse', {
+        dgWs = new WebSocket('wss://agent.deepgram.com/agent', {
           headers: { 'Authorization': `Token ${dynamicApiKey}` }
         });
 
