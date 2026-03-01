@@ -8,6 +8,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+// 1. GLOBAL ERROR CATCHING (Forces Railway to show you the "Why")
 process.on('uncaughtException', (err) => console.error('🔥 CRITICAL ERROR:', err));
 process.on('unhandledRejection', (reason) => console.error('⚠️ UNHANDLED REJECTION:', reason));
 
@@ -23,6 +24,7 @@ wss.on('connection', (ws, req) => {
 
   let dgWs = null;
   let streamSid = null;
+  let keepAliveInterval = null;
 
   ws.on('message', (message) => {
     try {
@@ -32,7 +34,7 @@ wss.on('connection', (ws, req) => {
         streamSid = msg.start.streamSid;
         console.log(`📞 Stream started: ${streamSid}`);
 
-        // ✅ FIXED: Correct V1 endpoint
+        // ✅ V1 DEDICATED AGENT ENDPOINT
         dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse', {
           headers: { 'Authorization': `Token ${dynamicApiKey}` }
         });
@@ -40,25 +42,23 @@ wss.on('connection', (ws, req) => {
         dgWs.on('open', () => {
           console.log(`✅ Deepgram connected for Lead: ${leadId}`);
 
-          // ✅ FIXED: Proper V1 Settings format with mulaw for Twilio
+          // ✅ KEEPALIVE: Prevents NET-0001 (1011/1005) timeouts
+          keepAliveInterval = setInterval(() => {
+            if (dgWs.readyState === WebSocket.OPEN) {
+              dgWs.send(JSON.stringify({ type: 'KeepAlive' }));
+            }
+          }, 5000);
+
+          // ✅ V1 SETTINGS: Optimized for Twilio 8kHz
           dgWs.send(JSON.stringify({
             type: 'Settings',
             audio: {
-              input: { 
-                encoding: 'mulaw', 
-                sample_rate: 8000 
-              },
-              output: { 
-                encoding: 'mulaw', 
-                sample_rate: 8000, 
-                container: 'none' 
-              }
+              input: { encoding: 'mulaw', sample_rate: 8000 },
+              output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
             },
             agent: {
               language: 'en',
-              listen: {
-                provider: { type: 'deepgram', model: 'nova-3' }
-              },
+              listen: { provider: { type: 'deepgram', model: 'nova-3' } },
               think: {
                 provider: { type: 'open_ai', model: 'gpt-4o-mini' },
                 instructions: `
@@ -82,9 +82,7 @@ wss.on('connection', (ws, req) => {
                   - End the call professionally.
                 `
               },
-              speak: {
-                provider: { type: 'deepgram', model: 'aura-2-thalia-en' }
-              },
+              speak: { provider: { type: 'deepgram', model: 'aura-2-thalia-en' } },
               greeting: "Hello, is this a good time to talk?"
             },
             functions: [
@@ -103,6 +101,7 @@ wss.on('connection', (ws, req) => {
         });
 
         dgWs.on('message', (data, isBinary) => {
+          // 2. HANDLE RAW AUDIO (Binary)
           if (isBinary) {
             if (ws.readyState === WebSocket.OPEN && streamSid) {
               const payload = data.toString('base64');
@@ -115,43 +114,71 @@ wss.on('connection', (ws, req) => {
             return;
           }
 
+          // 3. HANDLE JSON (Events & Tools)
           try {
             const dgMsg = JSON.parse(data.toString());
-            console.log(`📨 DG Event: ${dgMsg.type}`);
 
+            if (dgMsg.type === 'ConversationText') {
+              console.log(`💬 ${dgMsg.role}: ${dgMsg.content}`);
+            }
+
+            // ✅ ERROR LOGGING: Captures specific DG V1 rejections
+            if (dgMsg.type === 'Error') {
+              console.error(`❌ DG Error Event:`, JSON.stringify(dgMsg));
+            }
+
+            // ✅ POLISHED TOOL HANDLER: Iterates through all tool calls
             if (dgMsg.type === 'FunctionCallRequest') {
-              const tool = dgMsg.function_name || (dgMsg.functions && dgMsg.functions[0]?.name);
-              const toolId = dgMsg.id || (dgMsg.functions && dgMsg.functions[0]?.id);
-              console.log(`🛠️ Tool Triggered: ${tool}`);
+              const functionCalls = dgMsg.functions || [];
+              
+              for (const call of functionCalls) {
+                const tool = call.name;
+                const toolId = call.id;
+                console.log(`🛠️ Tool Triggered: ${tool}`);
 
-              fetch(`https://agentbman2.base44.app/api/functions/postCallSync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tool, lead_id: leadId, campaign_id: campaignId })
-              }).catch(e => console.error("Sync Error:", e));
+                fetch(`https://agentbman2.base44.app/api/functions/postCallSync`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                    tool, 
+                    lead_id: leadId, 
+                    campaign_id: campaignId,
+                    arguments: call.arguments 
+                  })
+                }).catch(e => console.error("Sync Error:", e));
 
-              dgWs.send(JSON.stringify({
-                type: 'FunctionCallResponse',
-                id: toolId,
-                name: tool,
-                content: JSON.stringify({ status: 'success' })
-              }));
+                // Respond to DG so the agent knows it can keep talking
+                dgWs.send(JSON.stringify({
+                  type: 'FunctionCallResponse',
+                  id: toolId,
+                  name: tool,
+                  content: JSON.stringify({ status: 'success' })
+                }));
+              }
             }
           } catch (e) {
-            // non-JSON message, ignore
+            // Ignore non-JSON metadata
           }
         });
 
-        dgWs.on('error', (e) => console.error("❌ Deepgram Error:", e.message));
-        dgWs.on('close', (code, reason) => console.log(`🔌 Deepgram closed: ${code} ${reason}`));
+        dgWs.on('error', (e) => console.error("❌ Deepgram Error:", e.message, e));
+        dgWs.on('close', (code, reason) => {
+          console.log(`🔌 Deepgram closed: ${code} ${reason}`);
+          if (keepAliveInterval) clearInterval(keepAliveInterval);
+        });
       }
 
+      // 4. FORWARD MEDIA: Twilio -> Deepgram (Filter out 0-byte packets)
       if (msg.event === 'media' && dgWs?.readyState === WebSocket.OPEN) {
-        dgWs.send(Buffer.from(msg.media.payload, 'base64'));
+        const audioBuffer = Buffer.from(msg.media.payload, 'base64');
+        if (audioBuffer.length > 0) {
+          dgWs.send(audioBuffer);
+        }
       }
 
       if (msg.event === 'stop') {
         console.log(`🛑 Stream stopped: ${streamSid}`);
+        if (keepAliveInterval) clearInterval(keepAliveInterval);
         dgWs?.close(1000, 'Call ended');
       }
 
@@ -162,6 +189,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', (code) => {
     console.log(`📴 Twilio disconnected (${code})`);
+    if (keepAliveInterval) clearInterval(keepAliveInterval);
     if (dgWs && dgWs.readyState === WebSocket.OPEN) {
       dgWs.close(1000, 'Twilio call ended');
     }
@@ -169,4 +197,4 @@ wss.on('connection', (ws, req) => {
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, '0.0.0.0', () => console.log(`🌍 Server Running on ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🌍 Chris Engine live on ${PORT}`));
