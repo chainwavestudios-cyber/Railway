@@ -46,7 +46,7 @@ wss.on('connection', (ws, req) => {
             }
           }, 5000);
 
-          // ✅ SETTINGS: Fixed nesting for V1 Spec
+          // ✅ FINAL SPEC: prompt as string + functions inside think
           dgWs.send(JSON.stringify({
             type: 'Settings',
             audio: {
@@ -57,56 +57,52 @@ wss.on('connection', (ws, req) => {
               listen: { provider: { type: 'deepgram', model: 'nova-3' } },
               think: {
                 provider: { type: 'open_ai', model: 'gpt-4o-mini' },
-                prompt: {
-                  instructions: `
-                    # ROLE
-                    You are a professional SDR for Chris, a Senior Advisor at Corventa Metals. 
-                    Chris has 20 years experience. You are confident and data-driven.
-                    
-                    # SCRIPT
-                    - Hook: Ask for the lead. "Hope I haven't taken you away from anything important?"
-                    - Reason: Chris has a high-conviction play in Silver based on tangible data.
-                    - The Ask: Can they squeeze in 5-10 mins tomorrow or the next day to hear the strategy?
+                prompt: `
+                  # ROLE
+                  You are a professional SDR for Chris, a Senior Advisor at Corventa Metals. 
+                  Chris has 20 years experience. You are confident and data-driven.
+                  
+                  # SCRIPT
+                  - Hook: Ask for the lead. "Hope I haven't taken you away from anything important?"
+                  - Reason: Chris has a high-conviction play in Silver based on tangible data.
+                  - The Ask: Can they squeeze in 5-10 mins tomorrow or the next day to hear the strategy?
 
-                    # OBJECTIONS
-                    - If they say "Silver is at the top": Compare it to Bitcoin at $10k. 
-                    - Mention the AI data center and solar demand "squeeze."
-                    - Mention the Rick Harrison (Pawn Stars) Fox News interview about supply shortages.
+                  # OBJECTIONS
+                  - If they say "Silver is at the top": Compare it to Bitcoin at $10k. 
+                  - Mention the AI data center and solar demand "squeeze."
+                  - Mention the Rick Harrison (Pawn Stars) Fox News interview about supply shortages.
 
-                    # CLOSING
-                    - If they agree: Call mark_as_qualified and say Chris will follow up.
-                    - If they want the data: Call send_newsletter and send the video.
-                    - End the call professionally.
-                  `
-                }
+                  # CLOSING
+                  - If they agree: Call mark_as_qualified and say Chris will follow up.
+                  - If they want the data: Call send_newsletter and send the video.
+                  - End the call professionally.
+                `,
+                functions: [
+                  {
+                    name: "mark_as_qualified",
+                    description: "Lead agrees to a 5-10 minute call with Chris.",
+                    parameters: { type: "object", properties: {}, required: [] }
+                  },
+                  {
+                    name: "send_newsletter",
+                    description: "Lead wants the Rick Harrison silver video.",
+                    parameters: { type: "object", properties: {}, required: [] }
+                  }
+                ]
               },
               speak: { provider: { type: 'deepgram', model: 'aura-2-thalia-en' } },
               greeting: "Hello, is this a good time to talk?"
-            },
-            // ✅ FUNCTIONS: Correctly placed at top level of Settings
-            functions: [
-              {
-                name: "mark_as_qualified",
-                description: "Lead agrees to a 5-10 minute call with Chris.",
-                parameters: { type: "object", properties: {}, required: [] }
-              },
-              {
-                name: "send_newsletter",
-                description: "Lead wants the Rick Harrison silver video.",
-                parameters: { type: "object", properties: {}, required: [] }
-              }
-            ]
+            }
           }));
         });
 
         dgWs.on('message', (data, isBinary) => {
           if (isBinary) {
             if (ws.readyState === WebSocket.OPEN && streamSid) {
-              const payload = data.toString('base64');
               ws.send(JSON.stringify({
                 event: 'media',
                 streamSid,
-                media: { payload }
+                media: { payload: data.toString('base64') }
               }));
             }
             return;
