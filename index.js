@@ -32,21 +32,33 @@ wss.on('connection', (ws, req) => {
         streamSid = msg.start.streamSid;
         console.log(`📞 Stream started: ${streamSid}`);
 
-        // 1. WebSocket connection using Header Auth
-        dgWs = new WebSocket('wss://agent.deepgram.com/agent', {
+        // ✅ FIXED: Correct V1 endpoint
+        dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse', {
           headers: { 'Authorization': `Token ${dynamicApiKey}` }
         });
 
         dgWs.on('open', () => {
           console.log(`✅ Deepgram connected for Lead: ${leadId}`);
 
+          // ✅ FIXED: Proper V1 Settings format with mulaw for Twilio
           dgWs.send(JSON.stringify({
             type: 'Settings',
             audio: {
-              input: { encoding: 'mulaw', sample_rate: 8000 },
-              output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
+              input: { 
+                encoding: 'mulaw', 
+                sample_rate: 8000 
+              },
+              output: { 
+                encoding: 'mulaw', 
+                sample_rate: 8000, 
+                container: 'none' 
+              }
             },
             agent: {
+              language: 'en',
+              listen: {
+                provider: { type: 'deepgram', model: 'nova-3' }
+              },
               think: {
                 provider: { type: 'open_ai', model: 'gpt-4o-mini' },
                 instructions: `
@@ -70,23 +82,27 @@ wss.on('connection', (ws, req) => {
                   - End the call professionally.
                 `
               },
-              speak: { model: 'aura-2-thalia-en' },
-              functions: [
-                {
-                  name: "mark_as_qualified",
-                  description: "Lead agrees to a 5-10 minute call with Chris."
-                },
-                {
-                  name: "send_newsletter",
-                  description: "Lead wants the Rick Harrison silver video."
-                }
-              ]
-            }
+              speak: {
+                provider: { type: 'deepgram', model: 'aura-2-thalia-en' }
+              },
+              greeting: "Hello, is this a good time to talk?"
+            },
+            functions: [
+              {
+                name: "mark_as_qualified",
+                description: "Lead agrees to a 5-10 minute call with Chris.",
+                parameters: { type: "object", properties: {} }
+              },
+              {
+                name: "send_newsletter",
+                description: "Lead wants the Rick Harrison silver video.",
+                parameters: { type: "object", properties: {} }
+              }
+            ]
           }));
         });
 
         dgWs.on('message', (data, isBinary) => {
-          // 2. Handle Binary Audio (RAW Deepgram Output)
           if (isBinary) {
             if (ws.readyState === WebSocket.OPEN && streamSid) {
               const payload = data.toString('base64');
@@ -99,29 +115,30 @@ wss.on('connection', (ws, req) => {
             return;
           }
 
-          // 3. Handle JSON Messages (Metadata & Tools)
           try {
             const dgMsg = JSON.parse(data.toString());
+            console.log(`📨 DG Event: ${dgMsg.type}`);
 
             if (dgMsg.type === 'FunctionCallRequest') {
-              const tool = dgMsg.functions[0];
-              console.log(`🛠️ Tool Triggered: ${tool.name}`);
+              const tool = dgMsg.function_name || (dgMsg.functions && dgMsg.functions[0]?.name);
+              const toolId = dgMsg.id || (dgMsg.functions && dgMsg.functions[0]?.id);
+              console.log(`🛠️ Tool Triggered: ${tool}`);
 
               fetch(`https://agentbman2.base44.app/api/functions/postCallSync`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tool: tool.name, lead_id: leadId, campaign_id: campaignId })
+                body: JSON.stringify({ tool, lead_id: leadId, campaign_id: campaignId })
               }).catch(e => console.error("Sync Error:", e));
 
               dgWs.send(JSON.stringify({
                 type: 'FunctionCallResponse',
-                id: tool.id,
-                name: tool.name,
+                id: toolId,
+                name: tool,
                 content: JSON.stringify({ status: 'success' })
               }));
             }
           } catch (e) {
-            // Log non-critical metadata
+            // non-JSON message, ignore
           }
         });
 
@@ -129,12 +146,10 @@ wss.on('connection', (ws, req) => {
         dgWs.on('close', (code, reason) => console.log(`🔌 Deepgram closed: ${code} ${reason}`));
       }
 
-      // 4. Forward Human Audio (Twilio -> Deepgram)
       if (msg.event === 'media' && dgWs?.readyState === WebSocket.OPEN) {
         dgWs.send(Buffer.from(msg.media.payload, 'base64'));
       }
 
-      // 5. Clean Stop Event
       if (msg.event === 'stop') {
         console.log(`🛑 Stream stopped: ${streamSid}`);
         dgWs?.close(1000, 'Call ended');
