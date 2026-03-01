@@ -20,7 +20,7 @@ process.on("unhandledRejection", (reason) => console.error("⚠️ UNHANDLED REJ
 app.get("/health", (req, res) => res.status(200).send("Orion Engine Live"));
 
 /* -------------------------------------------------------
-   WEBSOCKET CONNECTION
+   MAIN WEBSOCKET SERVER
 ------------------------------------------------------- */
 wss.on("connection", (clientWs, req) => {
   const params = url.parse(req.url, true).query;
@@ -57,12 +57,16 @@ wss.on("connection", (clientWs, req) => {
         dgWs.on("open", () => {
           console.log("✅ Connected to Deepgram");
 
-          // Keep connection alive every 5 seconds
+          // Keep connection alive
           keepAliveInterval = setInterval(() => {
             if (dgWs.readyState === WebSocket.OPEN) dgWs.send(JSON.stringify({ type: "KeepAlive" }));
           }, 5000);
 
-          // Send Deepgram agent settings
+          // Send tiny silent audio chunk immediately to initialize session
+          const silence = Buffer.alloc(320, 0); // ~20ms at 8kHz mulaw
+          dgWs.send(silence);
+
+          // Configure Deepgram agent
           dgWs.send(JSON.stringify({
             type: "Settings",
             audio: {
