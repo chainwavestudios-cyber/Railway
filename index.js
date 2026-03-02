@@ -99,7 +99,7 @@ wss.on('connection', (ws, req) => {
               think: {
                 provider: {
                   type: 'anthropic',
-                  model: 'claude-4-5-haiku-latest' // ✅ Correct model ID per Deepgram docs
+                  model: 'claude-haiku-4-5' // ✅ Confirmed Standard tier model per Deepgram docs
                 },
                 prompt: `You are Orion, a disciplined SDR calling for Chris, a Senior Precious Metals advisor at Corventa Metals.
 
