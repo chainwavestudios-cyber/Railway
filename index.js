@@ -73,8 +73,8 @@ wss.on('connection', (ws, req) => {
               },
               think: {
                 provider: {
-                  type: 'anthropic',
-                  model: 'claude-haiku-4-5'
+                  type: 'open_ai',
+                  model: 'gpt-4.1-nano'
                 },
                 prompt: `You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
 
@@ -219,7 +219,9 @@ Then call book_appointment with the confirmed day, AM or PM, and all qualifier n
                     mode: 'id',
                     id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' // ✅ your cloned voice
                   },
-                  language: 'en'
+                  language: 'en',
+                  speed: 0.3,
+                  emotion: ['positivity:high', 'curiosity:medium']
                 },
                 endpoint: {
                   url: 'https://api.cartesia.ai/tts/bytes',
