@@ -86,13 +86,13 @@ wss.on('connection', (ws, req) => {
               listen: {
                 provider: {
                   type: 'deepgram',
-                  model: 'flux' // ✅ Flux — purpose-built for voice agents, low latency
+                  model: 'flux' // ✅ Purpose-built for voice agents
                 }
               },
               think: {
                 provider: {
                   type: 'anthropic',
-                  model: 'claude-haiku-4-5' // ✅ Correct Deepgram alias for Claude Haiku 4.5
+                  model: 'claude-haiku-4-5' // ✅ Correct Deepgram alias
                 },
                 instructions: `
 You are Orion, a disciplined SDR calling for Chris, a Senior Precious Metals advisor at Corventa Metals.
@@ -210,12 +210,10 @@ Only book when clear agreement exists.
                   }
                 ]
               },
+              // ✅ Correct flat structure — Deepgram rejects nested provider objects for Cartesia
               speak: {
-                provider: {
-                  type: 'cartesia',
-                  model_id: 'sonic-english',
-                  voice_id: '820a3788-2b37-4d21-847a-b65d8a68c99a' // ✅ your Cartesia voice
-                }
+                provider: "cartesia",
+                voice_id: "820a3788-2b37-4d21-847a-b65d8a68c99a"
               }
             }
           }));
