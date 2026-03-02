@@ -19,6 +19,7 @@ wss.on('connection', (ws, req) => {
   const leadId = parameters.l || 'unknown';
   const campaignId = parameters.c || 'unknown';
   const deepgramApiKey = parameters.k || process.env.DEEPGRAM_API_KEY;
+  const email = parameters.e || '';
 
   let dgWs = null;
   let streamSid = null;
@@ -231,7 +232,8 @@ wss.on('connection', (ws, req) => {
                     tool: call.name,
                     lead_id: leadId,
                     campaign_id: campaignId,
-                    params: callArgs
+                    params: callArgs,
+                    email: email
                   })
                 }).catch(e => console.error('Sync Error:', e));
 
