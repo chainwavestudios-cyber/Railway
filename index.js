@@ -1,115 +1,113 @@
-import express from "express";
-import { WebSocketServer } from "ws";
-import WebSocket from "ws";
-import fetch from "node-fetch";
+import express from 'express';
+import { WebSocketServer } from 'ws';
+import WebSocket from 'ws';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
-const server = app.listen(process.env.PORT || 3000, () => {
-  console.log("🚀 Orion Engine Running");
+app.use(express.json());
+
+/* ==============================
+   ✅ RAILWAY HEALTHCHECK ROUTE
+============================== */
+app.get('/', (req, res) => {
+  res.status(200).send('OK');
 });
 
+/* ==============================
+   ✅ START SERVER (RAILWAY SAFE)
+============================== */
+const PORT = process.env.PORT || 3000;
+
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Railway AI Agent running on port ${PORT}`);
+});
+
+/* ==============================
+   WEBSOCKET SERVER
+============================== */
 const wss = new WebSocketServer({ server });
 
-wss.on("connection", (ws, req) => {
+wss.on('connection', (ws, req) => {
+  console.log('🔌 Twilio connected');
+
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const params = Object.fromEntries(url.searchParams.entries());
+  const parameters = Object.fromEntries(url.searchParams.entries());
 
-  const leadId = params.l;
-  const firstName = params.f || "there";
-  const email = params.e || "";
-  const callLogId = params.log;
-  const isInbound = params.inbound === "true";
+  const campaignId = parameters.c || 'unknown_campaign';
+  const leadId = parameters.l || 'unknown_lead';
+  const firstName = parameters.f || 'there';
+  const isInbound = parameters.inbound === 'true';
 
-  let fullTranscript = "";
-  const callStart = Date.now();
+  console.log(`📞 Campaign: ${campaignId}`);
+  console.log(`👤 Lead: ${leadId}`);
+  console.log(`📥 Inbound: ${isInbound}`);
 
-  const inboundPrompt = `
-You are Orion returning a missed call.
-Speak naturally and concisely.
-Book using only DAY and AM/PM.
-Do not ask for email.
-End call immediately after booking.
-`;
+  // ==============================
+  // PROMPTS
+  // ==============================
 
   const outboundPrompt = `
-You are Orion calling ${firstName}.
-Speak naturally and concisely.
-Book using only DAY and AM/PM.
-Do not ask for email.
-End call immediately after booking.
+You are Orion, an elite senior SDR setting appointments for Chris, a Senior Strategy Advisor.
+... (unchanged)
 `;
 
-  const dgWs = new WebSocket("wss://agent.deepgram.com/v1/agent", {
-    headers: {
-      Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`
-    }
-  });
+  const inboundPrompt = `
+You are Orion returning a missed call on behalf of Chris, a Senior Strategy Advisor.
+... (unchanged)
+`;
 
-  dgWs.on("open", () => {
+  const promptToUse = isInbound ? inboundPrompt : outboundPrompt;
+
+  // ==============================
+  // CONNECT TO DEEPGRAM AGENT
+  // ==============================
+
+  const dgWs = new WebSocket(
+    'wss://agent.deepgram.com/v1/agent',
+    {
+      headers: {
+        Authorization: \`Token \${process.env.DEEPGRAM_API_KEY}\`
+      }
+    }
+  );
+
+  dgWs.on('open', () => {
+    console.log('🧠 Connected to Deepgram');
+
     dgWs.send(JSON.stringify({
-      type: "Settings",
+      type: 'Settings',
       audio: {
-        input: { encoding: "mulaw", sample_rate: 8000 },
-        output: { encoding: "mulaw", sample_rate: 8000 }
+        input: { encoding: 'mulaw', sample_rate: 8000 },
+        output: { encoding: 'mulaw', sample_rate: 8000 }
       },
       agent: {
         listen: {
-          provider: { type: "deepgram", model: "flux-general-en" }
+          provider: { type: 'deepgram', model: 'flux-general-en' }
         },
         think: {
-          provider: { type: "open_ai", model: "gpt-4.1-nano" },
-          prompt: isInbound ? inboundPrompt : outboundPrompt,
-          tools: [
-            {
-              name: "book_appointment",
-              description: "Create CRM appointment",
-              parameters: {
-                type: "object",
-                properties: {
-                  day: { type: "string" },
-                  time_of_day: { type: "string", enum: ["AM", "PM"] }
-                },
-                required: ["day", "time_of_day"]
-              }
-            },
-            {
-              name: "mark_email_requested",
-              description: "Mark lead requested email",
-              parameters: {
-                type: "object",
-                properties: {}
-              }
-            },
-            {
-              name: "update_lead_notes",
-              description: "Append note to lead",
-              parameters: {
-                type: "object",
-                properties: {
-                  note: { type: "string" }
-                },
-                required: ["note"]
-              }
-            }
-          ]
+          provider: { type: 'open_ai', model: 'gpt-4.1-nano' },
+          prompt: promptToUse
         },
         speak: isInbound
           ? {
-              provider: { type: "deepgram", model: "aura-2-thalia-en" }
+              provider: { type: 'deepgram', model: 'aura-2-thalia-en' }
             }
           : {
               provider: {
-                type: "cartesia",
-                model_id: "sonic-2",
+                type: 'cartesia',
+                model_id: 'sonic-2',
                 voice: {
-                  mode: "id",
-                  id: process.env.CARTESIA_VOICE_ID
-                }
+                  mode: 'id',
+                  id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca'
+                },
+                language: 'en'
               },
               endpoint: {
-                url: "https://api.cartesia.ai/tts/bytes",
+                url: 'https://api.cartesia.ai/tts/bytes',
                 headers: {
-                  "x-api-key": process.env.CARTESIA_API_KEY
+                  'x-api-key': process.env.CARTESIA_API_KEY
                 }
               }
             }
@@ -118,110 +116,45 @@ End call immediately after booking.
 
     if (isInbound) {
       dgWs.send(JSON.stringify({
-        type: "UserText",
-        text: "Begin the call."
+        type: 'UserText',
+        text: 'Begin the call now.'
       }));
     }
   });
 
-  // Receive audio from Twilio → send to Deepgram
-  ws.on("message", message => {
-    const data = JSON.parse(message);
+  // ==============================
+  // TWILIO <-> DEEPGRAM AUDIO PIPE
+  // ==============================
 
-    if (data.event === "media") {
+  ws.on('message', (msg) => {
+    const data = JSON.parse(msg);
+
+    if (data.event === 'media') {
       dgWs.send(JSON.stringify({
-        type: "Audio",
+        type: 'Audio',
         audio: data.media.payload
       }));
     }
   });
 
-  // Receive AI responses from Deepgram
-  dgWs.on("message", async message => {
-    const data = JSON.parse(message);
+  dgWs.on('message', (msg) => {
+    const data = JSON.parse(msg);
 
-    // Stream audio back to Twilio
-    if (data.type === "Audio") {
+    if (data.type === 'Audio') {
       ws.send(JSON.stringify({
-        event: "media",
+        event: 'media',
         media: { payload: data.audio }
       }));
     }
-
-    // Capture transcript
-    if (data.type === "ConversationText") {
-      fullTranscript += `\n${data.role}: ${data.content}`;
-    }
-
-    // Tool Calls
-    if (data.type === "ToolCall") {
-      const tool = data.name;
-      const args = data.arguments;
-
-      if (tool === "book_appointment") {
-        await fetch(`${process.env.BASE44_API_URL}/entities/Appointment`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.BASE44_SERVICE_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            lead_id: leadId,
-            scheduled_date: new Date().toISOString(),
-            time_of_day: args.time_of_day,
-            status: "scheduled",
-            notes: `Booked via AI (${args.day} ${args.time_of_day})`
-          })
-        });
-      }
-
-      if (tool === "mark_email_requested") {
-        await fetch(`${process.env.BASE44_API_URL}/entities/Lead/${leadId}`, {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${process.env.BASE44_SERVICE_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            notes: "email_requested"
-          })
-        });
-      }
-
-      if (tool === "update_lead_notes") {
-        await fetch(`${process.env.BASE44_API_URL}/entities/Lead/${leadId}`, {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${process.env.BASE44_SERVICE_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            notes: args.note
-          })
-        });
-      }
-    }
   });
 
-  // When call ends
-  ws.on("close", async () => {
-    const duration = Math.floor((Date.now() - callStart) / 1000);
-
-    if (callLogId) {
-      await fetch(`${process.env.BASE44_API_URL}/entities/CallLog/${callLogId}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${process.env.BASE44_SERVICE_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          status: "completed",
-          duration_seconds: duration,
-          transcript: fullTranscript
-        })
-      });
-    }
-
+  ws.on('close', () => {
+    console.log('🔌 Twilio disconnected');
     dgWs.close();
+  });
+
+  dgWs.on('close', () => {
+    console.log('🧠 Deepgram disconnected');
+    ws.close();
   });
 });
