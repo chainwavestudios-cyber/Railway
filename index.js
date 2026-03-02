@@ -87,8 +87,8 @@ CORE RULES:
 - Follow the script. Only deviate for direct questions or objections, then return immediately.
 - Goal: book a call. Confirm day and AM or PM only.
 - Once day and AM/PM confirmed, IMMEDIATELY run the qualifier questions before ending.
-- At close, offer the newsletter. If they say yes, call send_newsletter.
-- Call book_appointment once day and time are confirmed.
+- At close, offer the newsletter. If they say yes, you MUST call send_newsletter as a function call immediately.
+- You MUST call book_appointment as a function call the moment day and time are confirmed. This is mandatory — do not skip it under any circumstance.
 
 ---
 
@@ -173,7 +173,7 @@ PHASE 5 — CLOSE
 
 If yes: "Perfect... I'll get that sent over." Then call send_newsletter.
 Do NOT ask for or confirm email unless they bring it up.
-Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
+You MUST now call book_appointment as a function. This is required — include day, AM or PM, and any qualifier notes from the conversation. Do not end the call without calling this function.``,
 
                 functions: [
                   {
@@ -221,7 +221,7 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
                   model_id: 'sonic-2',
                   voice: {
                     mode: 'id',
-                    id: '8b1206c8-ea8a-4a6a-b3f4-9908d1258237' // [OK] your cloned voice
+                    id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' // [OK] your cloned voice
                   },
                   language: 'en'
                 },
@@ -266,7 +266,8 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
             if (dgMsg.type === 'FunctionCallRequest') {
               const calls = dgMsg.functions || [];
               for (const call of calls) {
-                console.log(`[TOOL] Tool Triggered: ${call.name} | Params: ${JSON.stringify(call.input || {})}`);
+                const callArgs = call.arguments ? JSON.parse(call.arguments) : (call.input || {});
+                console.log(`[TOOL] Tool Triggered: ${call.name} | Params: ${JSON.stringify(callArgs)}`);
 
                 await fetch('https://agentbman2.base44.app/api/functions/postCallSync', {
                   method: 'POST',
@@ -275,7 +276,7 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
                     tool: call.name,
                     lead_id: leadId,
                     campaign_id: campaignId,
-                    params: call.input || {}
+                    params: callArgs
                   })
                 }).catch(e => console.error('Sync Error:', e));
 
