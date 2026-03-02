@@ -11,8 +11,8 @@ const wss = new WebSocketServer({ server });
 /* -------------------------------------------------------
    GLOBAL SAFETY HANDLERS
 ------------------------------------------------------- */
-process.on('uncaughtException', (err) => console.error('🔥 CRITICAL ERROR:', err));
-process.on('unhandledRejection', (reason) => console.error('⚠️ UNHANDLED REJECTION:', reason));
+process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:', err));
+process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
 
 /* -------------------------------------------------------
    HEALTH CHECK
@@ -49,7 +49,7 @@ wss.on('connection', (ws, req) => {
         });
 
         dgWs.on('open', () => {
-          console.log(`✅ Connected to Deepgram | Lead: ${leadId}`);
+          console.log(`[OK] Connected to Deepgram | Lead: ${leadId}`);
 
           keepAliveInterval = setInterval(() => {
             if (dgWs.readyState === WebSocket.OPEN) {
@@ -221,7 +221,7 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
                   model_id: 'sonic-2',
                   voice: {
                     mode: 'id',
-                    id: '8b1206c8-ea8a-4a6a-b3f4-9908d1258237' // ✅ your cloned voice
+                    id: '8b1206c8-ea8a-4a6a-b3f4-9908d1258237' // [OK] your cloned voice
                   },
                   language: 'en'
                 },
@@ -256,17 +256,17 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
             const dgMsg = JSON.parse(data.toString());
 
             if (dgMsg.type === 'ConversationText') {
-              console.log(`💬 ${dgMsg.role}: ${dgMsg.content}`);
+              console.log(`[CHAT] ${dgMsg.role}: ${dgMsg.content}`);
             }
 
             if (dgMsg.type === 'Error') {
-              console.error('❌ Deepgram Error Message:', JSON.stringify(dgMsg));
+              console.error('[ERROR] Deepgram Error Message:', JSON.stringify(dgMsg));
             }
 
             if (dgMsg.type === 'FunctionCallRequest') {
               const calls = dgMsg.functions || [];
               for (const call of calls) {
-                console.log(`🛠️ Tool Triggered: ${call.name} | Params: ${JSON.stringify(call.input || {})}`);
+                console.log(`[TOOL] Tool Triggered: ${call.name} | Params: ${JSON.stringify(call.input || {})}`);
 
                 await fetch('https://agentbman2.base44.app/api/functions/postCallSync', {
                   method: 'POST',
@@ -292,9 +292,9 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
           }
         });
 
-        dgWs.on('error', (e) => console.error('❌ Deepgram WS Error:', e.message));
+        dgWs.on('error', (e) => console.error('[ERROR] Deepgram WS Error:', e.message));
         dgWs.on('close', (code, reason) => {
-          console.log(`🔌 Deepgram closed: ${code} | Reason: ${reason?.toString() || 'none'}`);
+          console.log(`[CLOSE] Deepgram closed: ${code} | Reason: ${reason?.toString() || 'none'}`);
           if (keepAliveInterval) clearInterval(keepAliveInterval);
         });
       }
@@ -312,7 +312,7 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
          STOP EVENT
       ----------------------------- */
       if (msg.event === 'stop') {
-        console.log(`🛑 Stream stopped: ${streamSid}`);
+        console.log(`[STOP] Stream stopped: ${streamSid}`);
         if (keepAliveInterval) clearInterval(keepAliveInterval);
         dgWs?.close(1000, 'Call ended');
       }
@@ -323,7 +323,7 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
   });
 
   ws.on('close', () => {
-    console.log(`📴 Client disconnected`);
+    console.log(`[DISC] Client disconnected`);
     if (keepAliveInterval) clearInterval(keepAliveInterval);
     dgWs?.close(1000, 'Client disconnected');
   });
@@ -333,4 +333,4 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
    START SERVER
 ------------------------------------------------------- */
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Orion Engine Running on Port ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`[START] Orion Engine Running on Port ${PORT}`));
