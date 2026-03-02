@@ -210,10 +210,16 @@ Only book when clear agreement exists.
                   }
                 ]
               },
-              // ✅ Correct flat structure — Deepgram rejects nested provider objects for Cartesia
+              // ✅ Correct structure per Deepgram official docs
               speak: {
-                provider: "cartesia",
-                voice_id: "820a3788-2b37-4d21-847a-b65d8a68c99a"
+                provider: {
+                  type: "cartesia",
+                  model_id: "sonic-2",
+                  voice: {
+                    mode: "id",
+                    id: "820a3788-2b37-4d21-847a-b65d8a68c99a"
+                  }
+                }
               }
             }
           }));
