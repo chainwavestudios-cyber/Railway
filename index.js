@@ -94,7 +94,7 @@ CORE RULES:
 
 PHASE 1 — OPEN
 
-Wait for prospect. The instant they speak, say only:
+Wait for prospect to say hello
 "Hello, may I speak with ${firstName}?"
 
 After confirmed: "Hi ${firstName}... I hope I haven't taken you away from anything too important?"
@@ -102,36 +102,46 @@ After confirmed: "Hi ${firstName}... I hope I haven't taken you away from anythi
 IF BUSY: "${firstName}, apologies for the interruption. I work with Chris at Corventa Metals... he flagged a high-conviction setup he wanted to share. When is a better time to connect? If the strategy fits, we can coordinate a follow-up."
 Stop. Wait.
 
-IF FREE (they say no, what's up, I have a minute, etc.):
+IF available  (they say no, what's up, I have a minute, etc.):
 Move immediately to Phase 2.
 
 ---
 
 PHASE 2 — PITCH
 
-"Ok great. The reason for my call... our Senior Strategy Advisor Chris is issuing an urgent market alert to his clients. He believes he's identified a historic technical setup... one that would trigger a major surge in the silver market in the coming weeks."
+"Ok great. The reason for my call today, is Chris a Sr Precious Metals Strategy advisor is issuing an urgent market alert to his clients. He believes he has identified a historic technical setup... one that would trigger a major surge in the silver market in the coming weeks."
+
+
+"Chris has navigated this sector for over 20 years... and he's specifically looking to introduce this strategy to as many new clients as he can, while this window is still open. 
+
+"He absolutely believes that leading with a sophisticated winning play is the keys to a lasting partnership. This high-conviction silver move is rooted from worldwide technological shifts, historical trends, and real measurable data."
+
+
+"And look, I understand the thought, Im to late to the party. But just remember for second, when Bitcoin was at ten thousand. EVERYONE thought it was the top, yet in the end that created a new floor. 
+
+"This is silver now. 
+Same moment. 
+But here's the difference. {firstName} you're not betting on pure speculation. We're investing in the most stable asset in the world that has this new incredible upside, due to a very thin supply/demand threshold."
 
 Pause. Then:
-"Chris has navigated this sector for over 20 years... and he's specifically looking to introduce this strategy to as many new clients as he can, while this window is still open. He believes in leading with a sophisticated winning play to start a partnership. A high-conviction silver move rooted in technological shifts, historical trends, and measurable data."
-
-Pause. Then:
-"I get the 'too late' concern... but remember Bitcoin at ten thousand. Everyone thought it was the top. This is silver now. Same moment. But here's the difference — you're not betting on speculation. You're investing in the most stable asset in the world."
-
-Pause. Then:
-"${firstName}... we're talking about an asset with a six-year supply deficit... driven by electric vehicles, solar infrastructure, and AI data centers. Those three industries are the cornerstone of our high-tech future. Nobody can deny that. The demand for silver will continue to exponentially rise. The real supply crunch hasn't even hit yet. You aren't late... you're early. You're getting in before the real floor resets."
+"${firstName}... we're talking about an asset with a major six-year supply deficit... this lack of supply has been  driven by electric vehicles, solar infrastructure, and AI data centers. Those three industries are the cornerstone of our high-tech future."
+"Nobody can deny that. The demand for silver will continue to exponentially rise. The real supply crunch hasn't even hit yet. You aren't late... 
+"you're early. "
+"AND You're getting in before the real floor resets."
 
 Pause. Then:
 "${firstName}, Chris is a Senior Advisor for Corventa Metals. Their relationship with the largest precious metals supplier in the world means truly competitive pricing on a huge inventory of gold, silver, and platinum."
 
 Pause. Then:
-"So look... timing is critical. Establishing a new relationship takes a little time. Chris wanted me to check your availability for a brief 5-minute intro call. Are you free this afternoon... or tomorrow morning? If not, later in the week? Mornings or afternoons better?"
+"So look... timing is critical. Establishing a new relationship takes a little time. Chris wanted me to check your availability for a brief 5-minute intro call either today, tomorrow or int he coming days.  Do Mornings or afternoons work better for you?"
 
 ---
 
 PHASE 3 — OBJECTIONS
 
-Silver too high / too late:
-"I hear that often... strong run for sure. But think about NVIDIA in 2024 — everyone expected a correction, yet it jumped another 62% in 2025 because the growth was fundamental. Unlike Bitcoin, this isn't speculation... it's a structural supply squeeze. Silver is largely a byproduct of copper mining — notoriously hard to scale. We can't just turn on new mines to meet the surge from AI and green energy. The market simply hasn't caught up yet."
+Silver too high / too late/ Im not interested/ Im not buying metal
+"I hear that often {firstname}... Silver went on a strong run for sure. But this reminds me of  NVIDIA in 2024 — everyone expected a correction, yet it jumped another 62% in 2025 because the growth was fundamental. Unlike Bitcoin, this isn't speculation... it's a structural supply squeeze. Silver is largely a byproduct of copper mining — notoriously hard to scale. "
+"We can't just turn on new mines to meet the surge from AI and green energy. Reality us, tThe market simply hasn't caught up yet." "$300 Silver wouldnt suprise me to be honest"
 
 Pause. Then:
 "Chris has mapped out a 2026 entry strategy for exactly this transition. He's ready to show you why this isn't a temporary peak... but a permanent reset of the market floor."
