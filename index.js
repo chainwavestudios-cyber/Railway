@@ -219,9 +219,7 @@ Then call book_appointment with the confirmed day, AM or PM, and all qualifier n
                     mode: 'id',
                     id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' // ✅ your cloned voice
                   },
-                  language: 'en',
-                  speed: 0.3,
-                  emotion: ['positivity:high', 'curiosity:medium']
+                  language: 'en'
                 },
                 endpoint: {
                   url: 'https://api.cartesia.ai/tts/bytes',
