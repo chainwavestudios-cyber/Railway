@@ -1,8 +1,8 @@
-import express from "express";
-import http from "http";
-import { WebSocket, WebSocketServer } from "ws";
-import url from "url";
-import fetch from "node-fetch";
+import express from 'express';
+import http from 'http';
+import { WebSocket, WebSocketServer } from 'ws';
+import url from 'url';
+import fetch from 'node-fetch';
 
 const app = express();
 const server = http.createServer(app);
@@ -11,70 +11,80 @@ const wss = new WebSocketServer({ server });
 /* -------------------------------------------------------
    GLOBAL SAFETY HANDLERS
 ------------------------------------------------------- */
-process.on("uncaughtException", (err) => console.error("🔥 CRITICAL ERROR:", err));
-process.on("unhandledRejection", (reason) => console.error("⚠️ UNHANDLED REJECTION:", reason));
+process.on('uncaughtException', (err) => console.error('🔥 CRITICAL ERROR:', err));
+process.on('unhandledRejection', (reason) => console.error('⚠️ UNHANDLED REJECTION:', reason));
 
 /* -------------------------------------------------------
    HEALTH CHECK
 ------------------------------------------------------- */
-app.get("/health", (req, res) => res.status(200).send("Orion Engine Live"));
+app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
 /* -------------------------------------------------------
    MAIN WEBSOCKET SERVER
 ------------------------------------------------------- */
-wss.on("connection", (clientWs, req) => {
+wss.on('connection', (ws, req) => {
   const parameters = url.parse(req.url, true).query;
-
-  const firstName = parameters.f || "there";
-  const leadId = parameters.l || "unknown";
-  const campaignId = parameters.c || "unknown";
+  const firstName = parameters.f || 'there';
+  const leadId = parameters.l || 'unknown';
+  const campaignId = parameters.c || 'unknown';
   const deepgramApiKey = parameters.k || process.env.DEEPGRAM_API_KEY;
 
   let dgWs = null;
   let streamSid = null;
   let keepAliveInterval = null;
+  let silentInterval = null;
+  let firstAudioReceived = false;
 
-  clientWs.on("message", async (message) => {
+  /* -------------------------------------------------------
+     HANDLE INCOMING MESSAGES
+  ------------------------------------------------------- */
+  ws.on('message', async (message) => {
     try {
       const msg = JSON.parse(message);
 
       /* -----------------------------
-         CALL START EVENT
+         CALL START
       ----------------------------- */
-      if (msg.event === "start") {
+      if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
 
-        dgWs = new WebSocket("wss://agent.deepgram.com/v1/agent/converse", {
+        dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse', {
           headers: { Authorization: `Token ${deepgramApiKey}` }
         });
 
-        dgWs.on("open", () => {
-          console.log(`✅ Connected to Deepgram for ${leadId}`);
+        /* -----------------------------
+           CONNECTION OPEN
+        ----------------------------- */
+        dgWs.on('open', () => {
+          console.log(`✅ Connected to Deepgram | Lead: ${leadId}`);
 
-          // Keep connection alive
+          // Keepalive ping
           keepAliveInterval = setInterval(() => {
-            if (dgWs.readyState === WebSocket.OPEN) dgWs.send(JSON.stringify({ type: "KeepAlive" }));
+            if (dgWs.readyState === WebSocket.OPEN) dgWs.send(JSON.stringify({ type: 'KeepAlive' }));
           }, 5000);
 
-          // Send a tiny silent frame immediately to avoid 1005 closes
-          const silent = Buffer.from([0xFF]);
-          dgWs.send(silent);
+          // Inject silent audio until first real audio arrives
+          silentInterval = setInterval(() => {
+            if (dgWs.readyState === WebSocket.OPEN && !firstAudioReceived) {
+              const silentFrame = Buffer.alloc(320, 0); // ~20ms silence
+              dgWs.send(silentFrame);
+            } else if (firstAudioReceived) {
+              clearInterval(silentInterval);
+            }
+          }, 20);
 
-          /* -------------------------------------------------------
-             DEEPGRAM SETTINGS + FULL SCRIPT
-          ------------------------------------------------------- */
+          // Deepgram Agent Settings
           dgWs.send(JSON.stringify({
-            type: "Settings",
+            type: 'Settings',
             audio: {
-              input: { encoding: "mulaw", sample_rate: 8000 },
-              output: { encoding: "mulaw", sample_rate: 8000, container: "none" }
+              input: { encoding: 'mulaw', sample_rate: 8000 },
+              output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
             },
             agent: {
-              listen: { provider: { type: "deepgram", model: "flux-general-en" } },
+              listen: { provider: { type: 'deepgram', model: 'flux-general-en' } },
               think: {
-                provider: { type: "anthropic", model: "claude-4-5-haiku-20241022" },
-                prompt: {
-                  instructions: `
+                provider: { type: 'anthropic', model: 'claude-4-5-haiku-20241022' },
+                instructions: `
 You are Orion, a disciplined SDR calling for Chris, a Senior Precious Metals advisor at Corventa Metals.
 
 ====================================================
@@ -106,6 +116,7 @@ After confirmation:
 "Hi ${firstName}, I hope I haven’t taken you away from anything too important?"
 If busy:
 "${firstName}, please excuse the timing. I work with Chris at Corventa Metals, and he asked me to reach out regarding a specific technical setup in the metals market that he doesn’t want you to miss. Since I caught you in the middle of something, when would be a better window to give you a quick 2-minute update?"
+Stop there.
 
 ====================================================
 PHASE 2 – AUTHORITY BUILDER
@@ -135,6 +146,7 @@ Then:
 "That’s exactly what Chris can explain in 10 minutes. Would today PM or tomorrow AM be better?"
 If not interested:
 "No problem at all, ${firstName}. I appreciate your time."
+End call.
 
 ====================================================
 PHASE 4 – AFTER AGREEMENT
@@ -142,8 +154,10 @@ PHASE 4 – AFTER AGREEMENT
 Once they agree to a DAY and AM/PM:
 "${firstName}, I just need to ask a couple quick questions before I confirm."
 1) "Have you ever purchased physical precious metals before?"
-If yes, ask: "What did you buy — gold, silver, platinum?"
+If yes, ask:
+"What did you buy — gold, silver, platinum?"
 2) "In terms of timing, do you have liquid capital ready for a metals move, or flexibility in your portfolio? We also specialize in retirement accounts."
+Keep it short.
 
 ====================================================
 PHASE 5 – CLOSE
@@ -152,6 +166,7 @@ PHASE 5 – CLOSE
 "In the meantime, would you like me to send over his bi-weekly newsletter?"
 If yes:
 "Perfect, I’ll get that sent over."
+DO NOT confirm email unless they bring it up.
 Then call function mark_as_qualified.
 
 ====================================================
@@ -165,41 +180,42 @@ Extract:
   - prior metals owned
   - IRA interest
   - liquidity comments
+
 Only book when clear agreement exists.
-`
-                }
+`,
+                functions: [
+                  {
+                    name: "mark_as_qualified",
+                    description: "Lead agreed to a scheduled call with Chris",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        day: { type: "string" },
+                        time_of_day: { type: "string", enum: ["AM", "PM"] },
+                        send_email: { type: "boolean" },
+                        notes: { type: "string" }
+                      },
+                      required: ["day", "time_of_day", "send_email"]
+                    }
+                  }
+                ]
               },
-              speak: { provider: { type: "cartesia" }, model: "sonic-english" },
-            },
-            functions: [
-              {
-                name: "mark_as_qualified",
-                description: "Lead agreed to a scheduled call with Chris",
-                parameters: {
-                  type: "object",
-                  properties: {
-                    day: { type: "string" },
-                    time_of_day: { type: "string", enum: ["AM", "PM"] },
-                    send_email: { type: "boolean" },
-                    notes: { type: "string" }
-                  },
-                  required: ["day", "time_of_day", "send_email"]
-                }
-              }
-            ]
+              speak: { provider: { type: 'cartesia' }, model: 'sonic-english' }
+            }
           }));
         });
 
         /* -----------------------------
-           HANDLE DEEPGRAM RESPONSES
+           HANDLE DEEPGRAM MESSAGES
         ----------------------------- */
-        dgWs.on("message", async (data, isBinary) => {
+        dgWs.on('message', (data, isBinary) => {
           if (isBinary) {
-            if (clientWs.readyState === WebSocket.OPEN && streamSid) {
-              clientWs.send(JSON.stringify({
-                event: "media",
+            if (ws.readyState === WebSocket.OPEN && streamSid) {
+              firstAudioReceived = true;
+              ws.send(JSON.stringify({
+                event: 'media',
                 streamSid,
-                media: { payload: data.toString("base64") }
+                media: { payload: data.toString('base64') }
               }));
             }
             return;
@@ -207,65 +223,69 @@ Only book when clear agreement exists.
 
           try {
             const dgMsg = JSON.parse(data.toString());
-            if (dgMsg.type === "ConversationText") console.log(`💬 ${dgMsg.role}: ${dgMsg.content}`);
 
-            if (dgMsg.type === "FunctionCallRequest") {
-              const call = dgMsg.functions[0];
-              const details = call.arguments;
-
-              console.log(`📅 Booking: ${firstName}`, details);
-
-              await fetch("https://agentbman2.base44.app/api/functions/postCallSync", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  action: "CREATE_APPOINTMENT",
-                  lead_name: firstName,
-                  lead_id: leadId,
-                  campaign_id: campaignId,
-                  appointment: {
-                    day: details.day,
-                    time_of_day: details.time_of_day,
-                    tags: ["lead_qualified", details.send_email ? "send_email" : null].filter(Boolean),
-                    notes: details.notes || ""
-                  }
-                })
-              }).catch(e => console.error("Sync Error:", e));
-
-              dgWs.send(JSON.stringify({ type: "FunctionCallResponse", id: call.id, name: call.name, content: JSON.stringify({ status: "success" }) }));
+            if (dgMsg.type === 'ConversationText') {
+              console.log(`💬 ${dgMsg.role}: ${dgMsg.content}`);
             }
-          } catch (err) { console.error("DG Processing Error:", err); }
+
+            if (dgMsg.type === 'FunctionCallRequest') {
+              const calls = dgMsg.functions || [];
+              for (const call of calls) {
+                console.log(`🛠️ Tool Triggered: ${call.name}`);
+                await fetch('https://agentbman2.base44.app/api/functions/postCallSync', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ tool: call.name, lead_id: leadId, campaign_id: campaignId })
+                }).catch(e => console.error("Sync Error:", e));
+
+                dgWs.send(JSON.stringify({
+                  type: 'FunctionCallResponse',
+                  id: call.id,
+                  name: call.name,
+                  content: JSON.stringify({ status: 'success' })
+                }));
+              }
+            }
+          } catch (e) {}
         });
 
-        dgWs.on("error", (e) => console.error("❌ Deepgram Error:", e.message));
-        dgWs.on("close", (code, reason) => {
-          console.log(`🔌 Deepgram closed: ${code}`, reason || "");
+        dgWs.on('error', (e) => console.error("❌ Deepgram Error:", e.message));
+        dgWs.on('close', (code) => {
+          console.log(`🔌 Deepgram closed: ${code}`);
           if (keepAliveInterval) clearInterval(keepAliveInterval);
+          if (silentInterval) clearInterval(silentInterval);
         });
       }
 
       /* -----------------------------
          MEDIA STREAMING
       ----------------------------- */
-      if (msg.event === "media" && dgWs?.readyState === WebSocket.OPEN) {
-        const audioBuffer = Buffer.from(msg.media.payload, "base64");
+      if (msg.event === 'media' && dgWs?.readyState === WebSocket.OPEN) {
+        firstAudioReceived = true;
+        const audioBuffer = Buffer.from(msg.media.payload, 'base64');
         if (audioBuffer.length > 0) dgWs.send(audioBuffer);
       }
 
       /* -----------------------------
          STOP EVENT
       ----------------------------- */
-      if (msg.event === "stop") {
+      if (msg.event === 'stop') {
+        console.log(`🛑 Stream stopped: ${streamSid}`);
         if (keepAliveInterval) clearInterval(keepAliveInterval);
-        dgWs?.close(1000, "Call ended");
+        if (silentInterval) clearInterval(silentInterval);
+        dgWs?.close(1000, 'Call ended');
       }
 
-    } catch (err) { console.error("Processing Error:", err); }
+    } catch (err) {
+      console.error("Processing Error:", err);
+    }
   });
 
-  clientWs.on("close", () => {
+  ws.on('close', () => {
+    console.log(`📴 Client disconnected`);
     if (keepAliveInterval) clearInterval(keepAliveInterval);
-    dgWs?.close(1000, "Client disconnected");
+    if (silentInterval) clearInterval(silentInterval);
+    dgWs?.close(1000, 'Client disconnected');
   });
 });
 
@@ -273,4 +293,4 @@ Only book when clear agreement exists.
    START SERVER
 ------------------------------------------------------- */
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Orion Engine Running on Port ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Orion Engine Running on Port ${PORT}`));
