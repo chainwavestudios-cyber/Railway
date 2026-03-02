@@ -60,6 +60,7 @@ wss.on('connection', (ws, req) => {
             'The Hook: The instant the prospect speaks, your ONLY response is: "Hello, may I speak with ' + firstName + '?"',
             'Logic: Stick to the script unless there is an objection. If a day/time is confirmed, move immediately to Phase 4.',
             'Functions: You MUST call book_appointment and send_newsletter as function calls when triggered.',
+            'DO NOT PAUSE BETWEEN LINES, KEEP THE FLOW GOING... Say once sentence, move to next. SOUND sincere and excited and use voice influctions',
             'ALWAYS include day and time_of_day params in book_appointment. Example: {day: "tomorrow", time_of_day: "AM", notes: "has gold, liquid"}',
             '',
             'PHASE 1 - OPEN',
