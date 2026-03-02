@@ -1,4 +1,4 @@
-import express from 'express';
+\import express from 'express';
 import http from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
 import url from 'url';
@@ -214,10 +214,18 @@ Then call book_appointment with the confirmed day, AM or PM, and all qualifier n
               speak: {
                 provider: {
                   type: 'cartesia',
-                  model_id: 'sonic-2',
+                  model_id: 'sonic-3',
                   voice: {
                     mode: 'id',
-                    id: '820a3788-2b37-4d21-847a-b65d8a68c99a'
+                    id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' // ✅ your cloned voice
+                  },
+                  language: 'en'
+                },
+                endpoint: {
+                  url: 'https://api.cartesia.ai/tts/bytes',
+                  headers: {
+                    'x-api-key': process.env.CARTESIA_API_KEY || 'sk_car_rKBM7SnrM1aLwSBpfwjj5w',
+                    'Cartesia-Version': '2025-04-16'
                   }
                 }
               }
