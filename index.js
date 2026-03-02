@@ -65,7 +65,7 @@ wss.on('connection', (ws, req) => {
             }
           }, 5000);
 
-          // ✅ 160 bytes = exactly 20ms of silence at 8kHz mulaw (1 byte per sample)
+          // ✅ 160 bytes = exactly 20ms silence at 8kHz mulaw (1 byte per sample)
           silentInterval = setInterval(() => {
             if (dgWs.readyState === WebSocket.OPEN && !firstAudioReceived) {
               const silentFrame = Buffer.alloc(160, 0);
@@ -75,27 +75,33 @@ wss.on('connection', (ws, req) => {
             }
           }, 20);
 
-          // Deepgram Agent Settings
+          // ✅ Settings built exactly per Deepgram official API spec
           dgWs.send(JSON.stringify({
             type: 'Settings',
             audio: {
-              input: { encoding: 'mulaw', sample_rate: 8000 },
-              output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
+              input: {
+                encoding: 'mulaw',
+                sample_rate: 8000
+              },
+              output: {
+                encoding: 'mulaw',
+                sample_rate: 8000,
+                container: 'none'
+              }
             },
             agent: {
               listen: {
                 provider: {
                   type: 'deepgram',
-                  model: 'flux' // ✅ Purpose-built for voice agents
+                  model: 'flux-general-en' // ✅ Correct Flux model string per docs
                 }
               },
               think: {
                 provider: {
                   type: 'anthropic',
-                  model: 'claude-haiku-4-5' // ✅ Correct Deepgram alias
+                  model: 'claude-4-5-haiku-latest' // ✅ Correct model ID per Deepgram docs
                 },
-                instructions: `
-You are Orion, a disciplined SDR calling for Chris, a Senior Precious Metals advisor at Corventa Metals.
+                prompt: `You are Orion, a disciplined SDR calling for Chris, a Senior Precious Metals advisor at Corventa Metals.
 
 ====================================================
 ABSOLUTE RULES
@@ -148,9 +154,7 @@ Demand is growing faster than production.
 Chris simply wants to show you why this high might actually be the floor."
 Then return to:
 "Would tomorrow morning or afternoon work better?"
-If they ask:
-"What's the play exactly?"
-Say ONE sentence only:
+If they ask "What's the play exactly?" say ONE sentence only:
 "It's a structural silver supply squeeze — sixth straight deficit year, with AI and solar demand accelerating faster than mining output."
 Then:
 "That's exactly what Chris can explain in 10 minutes. Would today PM or tomorrow AM be better?"
@@ -164,8 +168,7 @@ PHASE 4 – AFTER AGREEMENT
 Once they agree to a DAY and AM/PM:
 "${firstName}, I just need to ask a couple quick questions before I confirm."
 1) "Have you ever purchased physical precious metals before?"
-If yes, ask:
-"What did you buy — gold, silver, platinum?"
+If yes, ask: "What did you buy — gold, silver, platinum?"
 2) "In terms of timing, do you have liquid capital ready for a metals move, or flexibility in your portfolio? We also specialize in retirement accounts."
 Keep it short.
 
@@ -174,8 +177,7 @@ PHASE 5 – CLOSE
 ====================================================
 "Thanks for that information, ${firstName}. I've let Chris know to give you a call."
 "In the meantime, would you like me to send over his bi-weekly newsletter?"
-If yes:
-"Perfect, I'll get that sent over."
+If yes: "Perfect, I'll get that sent over."
 DO NOT confirm email unless they bring it up.
 Then call function mark_as_qualified.
 
@@ -186,38 +188,33 @@ Extract:
 - day
 - AM or PM
 - send_email true/false
-- notes including:
-  - prior metals owned
-  - IRA interest
-  - liquidity comments
+- notes including: prior metals owned, IRA interest, liquidity comments
+Only book when clear agreement exists.`,
 
-Only book when clear agreement exists.
-`,
-                functions: [
+                functions: [ // ✅ functions belongs inside think per official spec
                   {
-                    name: "mark_as_qualified",
-                    description: "Lead agreed to a scheduled call with Chris",
+                    name: 'mark_as_qualified',
+                    description: 'Lead agreed to a scheduled call with Chris',
                     parameters: {
-                      type: "object",
+                      type: 'object',
                       properties: {
-                        day: { type: "string" },
-                        time_of_day: { type: "string", enum: ["AM", "PM"] },
-                        send_email: { type: "boolean" },
-                        notes: { type: "string" }
+                        day: { type: 'string' },
+                        time_of_day: { type: 'string', enum: ['AM', 'PM'] },
+                        send_email: { type: 'boolean' },
+                        notes: { type: 'string' }
                       },
-                      required: ["day", "time_of_day", "send_email"]
+                      required: ['day', 'time_of_day', 'send_email']
                     }
                   }
                 ]
               },
-              // ✅ Correct structure per Deepgram official docs
               speak: {
                 provider: {
-                  type: "cartesia",
-                  model_id: "sonic-2",
+                  type: 'cartesia',
+                  model_id: 'sonic-2', // ✅ model_id for Cartesia per official spec
                   voice: {
-                    mode: "id",
-                    id: "820a3788-2b37-4d21-847a-b65d8a68c99a"
+                    mode: 'id',
+                    id: '820a3788-2b37-4d21-847a-b65d8a68c99a' // ✅ nested voice object per official spec
                   }
                 }
               }
@@ -248,7 +245,6 @@ Only book when clear agreement exists.
               console.log(`💬 ${dgMsg.role}: ${dgMsg.content}`);
             }
 
-            // Surface Deepgram error frames for easier debugging
             if (dgMsg.type === 'Error') {
               console.error('❌ Deepgram Error Message:', JSON.stringify(dgMsg));
             }
@@ -261,7 +257,7 @@ Only book when clear agreement exists.
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ tool: call.name, lead_id: leadId, campaign_id: campaignId })
-                }).catch(e => console.error("Sync Error:", e));
+                }).catch(e => console.error('Sync Error:', e));
 
                 dgWs.send(JSON.stringify({
                   type: 'FunctionCallResponse',
@@ -272,11 +268,11 @@ Only book when clear agreement exists.
               }
             }
           } catch (e) {
-            console.error("Failed to parse Deepgram message:", e);
+            console.error('Failed to parse Deepgram message:', e);
           }
         });
 
-        dgWs.on('error', (e) => console.error("❌ Deepgram WS Error:", e.message));
+        dgWs.on('error', (e) => console.error('❌ Deepgram WS Error:', e.message));
         dgWs.on('close', (code, reason) => {
           console.log(`🔌 Deepgram closed: ${code} | Reason: ${reason?.toString() || 'none'}`);
           if (keepAliveInterval) clearInterval(keepAliveInterval);
@@ -304,7 +300,7 @@ Only book when clear agreement exists.
       }
 
     } catch (err) {
-      console.error("Processing Error:", err);
+      console.error('Processing Error:', err);
     }
   });
 
