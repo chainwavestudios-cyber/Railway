@@ -15,7 +15,7 @@ app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
 wss.on('connection', (ws, req) => {
   const parameters = url.parse(req.url, true).query;
-  const firstName = parameters.f || 'there';
+  const firstName = parameters.f || 'Philip';
   const leadId = parameters.l || 'unknown';
   const campaignId = parameters.c || 'unknown';
   const deepgramApiKey = parameters.k || process.env.DEEPGRAM_API_KEY;
