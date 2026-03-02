@@ -221,7 +221,7 @@ Then call book_appointment with confirmed day, AM or PM, and qualifier notes.``,
                   model_id: 'sonic-2',
                   voice: {
                     mode: 'id',
-                    id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' // ✅ your cloned voice
+                    id: '8b1206c8-ea8a-4a6a-b3f4-9908d1258237' // ✅ your cloned voice
                   },
                   language: 'en'
                 },
