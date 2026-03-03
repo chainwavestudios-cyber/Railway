@@ -160,9 +160,9 @@ wss.on('connection', (ws, req) => {
               speak: {
                 provider: {
                   type: 'cartesia',
-                  model_id: 'sonic-3',
+                  model_id: 'sonic-2',
                   voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' },
-                  speed: 0.5
+                  language: 'en'
                 },
                 endpoint: {
                   url: 'https://api.cartesia.ai/tts/bytes',
