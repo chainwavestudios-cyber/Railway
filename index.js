@@ -236,8 +236,8 @@ wss.on('connection', (ws, req) => {
               speak: {
                 provider: {
                   type: 'cartesia',
-                  model_id: 'sonic-2',
-                  voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' },
+                  model_id: 'sonic-3',
+                  voice: { mode: 'id', id: '86e30c1d-714b-4074-a1f2-1cb6b552fb49' },
                   language: 'en'
                 },
                 endpoint: {
