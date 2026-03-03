@@ -154,12 +154,7 @@ wss.on('connection', (ws, req) => {
           provider: {
             type: 'cartesia',
             model_id: 'sonic-3',
-            voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' },
-            language: 'en'
-          },
-          endpoint: {
-            url: 'https://api.cartesia.ai/tts/bytes',
-            headers: { 'x-api-key': process.env.CARTESIA_API_KEY || 'sk_car_rKBM7SnrM1aLwSBpfwjj5w' }
+            voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' }
           }
         }
       }
