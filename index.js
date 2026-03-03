@@ -13,6 +13,13 @@ process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJ
 
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
+// Handle WebSocket upgrades explicitly
+server.on('upgrade', (request, socket, head) => {
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit('connection', ws, request);
+  });
+});
+
 wss.on('connection', (ws, req) => {
   const parameters = url.parse(req.url, true).query;
   const firstName = parameters.f || 'there';
@@ -21,6 +28,8 @@ wss.on('connection', (ws, req) => {
   const email = parameters.e || '';
   const isInbound = parameters.inbound === 'true';
   const deepgramApiKey = parameters.k || process.env.DEEPGRAM_API_KEY;
+
+  console.log('[CONNECT] Lead: ' + leadId + ' | Campaign: ' + campaignId + ' | Inbound: ' + isInbound);
 
   let dgWs = null;
   let streamSid = null;
@@ -80,7 +89,7 @@ wss.on('connection', (ws, req) => {
             'IF AVAILABLE:',
             'Move immediately to Phase 2 without hesitation.',
             '',
-            'PHASE 2 - PITCH (LITERAL SCRIPT - DELIVER WITH MOMENTUM)',
+            'PHASE 2 - PITCH (LITERAL SCRIPT — DELIVER WITH MOMENTUM)',
             '"Ok great. The reason for my call today... is Chris, a Senior Precious Metals Strategy advisor, is issuing an urgent market alert to his clients. He believes he has identified a historic technical setup... one that would trigger a major surge in the silver market in the coming weeks."',
             '',
             '"Chris has navigated this sector for over 20 years... and he\'s specifically looking to introduce this strategy to as many new clients as he can, while this window is still open. He absolutely believes that leading with a sophisticated winning play is the key to a lasting partnership."',
@@ -95,11 +104,10 @@ wss.on('connection', (ws, req) => {
             '',
             '"So look... timing is critical. Establishing a new relationship takes a little time so Chris wanted me to check your availability for a brief 5-minute intro call either today, tomorrow or in the coming days. Do Mornings or afternoons work better for you?"',
             '',
-            'PHASE 3 - OBJECTIONS (DELIVER CONFIDENTLY - DO NOT DEFEND, EDUCATE WITH CERTAINTY)',
+            'PHASE 3 - OBJECTIONS (DELIVER CONFIDENTLY — DO NOT DEFEND, EDUCATE WITH CERTAINTY)',
             '',
             'OBJECTION: Silver too high / Too late',
-            '"I hear that often ' + firstName + '... and I\'ll be honest, it reminds me a lot of - NVIDIA - back in 2024. Everyone expected a major correction, yet it jumped another 60 percent because the growth was structural, not just hype. Unlike Bitcoin, this isn\'t speculation... it\'s a structural supply squeeze. We can\'t just turn on new mines to meet this surge from A.I. and green energy. $300 Silver wouldn\'t surprise me to be honest."',
-            '',
+            '"I hear that often ' + firstName + '... and I\'ll be honest, it reminds me a lot of NVIDIA back in 2024. Everyone expected a major correction, yet it jumped another 60 percent because the growth was structural, not just hype. Unlike Bitcoin, this isn\'t speculation... it\'s a structural supply squeeze. We can\'t just turn on new mines to meet this surge from A.I. and green energy. $300 Silver wouldn\'t surprise me to be honest."',
             '"Chris has mapped out a 2026 entry strategy for exactly this transition. Do you have some time later today, or maybe tomorrow, for just 5 minutes with Chris?"',
             '',
             'OBJECTION: What is the play?',
@@ -110,7 +118,7 @@ wss.on('connection', (ws, req) => {
             '(End call.)',
             '',
             'PHASE 4 - QUALIFY',
-            '(Run immediately after day/time confirmed - keep tempo high)',
+            '(Run immediately after day/time confirmed — keep tempo high)',
             '"' + firstName + '... just a couple quick questions before I confirm everything on my end. Have you ever purchased physical precious metals before?"',
             '(Wait)',
             '"Got it... and what did you buy... gold, silver, or platinum?"',
@@ -126,78 +134,55 @@ wss.on('connection', (ws, req) => {
             '(Call send_newsletter)',
             '',
             '"I\'ve got you all set. Chris will be reaching out. Have a great rest of your day, ' + firstName + '."',
-            '(Call book_appointment with day, time_of_day, and notes from qualifier answers.)'
+            '(Call book_appointment with day, time_of_day, and notes from qualifier answers.)',
           ].join('\n');
 
           const inboundPrompt = [
-            'Identity: You are Orion, an inbound sales agent for Corventa Metals. Someone has called in - they have intent. Be warm, confident, and move them toward booking a call with Chris.',
+            'Identity: You are Orion, an inbound sales agent for Corventa Metals. Someone has called in — they have intent. Be warm, confident, and move them toward booking a call with Chris.',
             '',
             'Vocal Style:',
             'Tone: Warm, confident, energetic.',
-            'Pacing: Eliminate passive pauses. Use "..." only for emphasis. Maintain forward momentum.',
-            'Delivery: Declarative, certain, energetic. Drive the conversation.',
-            'Formatting: Never read markup or punctuation aloud. Use natural contractions to sound human.',
-            'Adherence: You are an actor. Recite the PHASES exactly as written.',
+            'Pacing: Use "..." for natural pauses. Conversational and natural.',
+            'Never read markup aloud. Use contractions.',
             '',
             'Core Rules:',
-            'SPEAK FIRST on inbound - greet them immediately.',
+            'SPEAK FIRST on inbound — greet them immediately.',
             'Goal: Book a 5-minute call with Chris. Confirm day and AM or PM only.',
             'Once day/AM/PM confirmed, run qualifier questions immediately.',
             'ALWAYS include day and time_of_day in book_appointment call.',
-            'Functions: You MUST call book_appointment and send_newsletter as function calls when triggered.',
-            'ALWAYS include day and time_of_day params in book_appointment. Example: {day: "tomorrow", time_of_day: "AM", notes: "has gold, liquid"}',
             '',
-            'PHASE 1 - OPEN',
-            '(Say immediately when call connects)',
+            'OPENING (say immediately when call connects):',
             '"Thank you for calling Corventa Metals... this is Orion. How can I help you today?"',
-            '(Wait)',
             '',
-            'PHASE 2 - PITCH (LITERAL SCRIPT - DELIVER WITH MOMENTUM)',
             'After they explain why they called:',
             '"Great timing actually... Chris, our Senior Precious Metals Strategy Advisor, is issuing an urgent market alert right now. He\'s identified a historic technical setup that could trigger a major surge in silver in the coming weeks."',
-            '',
             '"He\'d love to walk you through it personally. It\'s just a quick 5-minute call. Are you free later today or tomorrow? Mornings or afternoons better?"',
             '',
             'PITCH (if they want to know more before booking):',
             '"We\'re talking about an asset with a six-year supply deficit... driven by electric vehicles, solar infrastructure, and A.I. data centers. The real supply crunch hasn\'t even hit yet. You\'re early."',
-            '',
             '"Chris has mapped out a specific 2026 entry strategy. He can walk you through exactly why now is the moment. Do you have 5 minutes later today or tomorrow?"',
             '',
-            'PHASE 3 - OBJECTIONS (DELIVER CONFIDENTLY - DO NOT DEFEND, EDUCATE WITH CERTAINTY)',
-            '',
             'OBJECTION: Too late / Silver ran up',
-            '"Think about NVIDIA in 2024... everyone expected a correction, yet it jumped another 60 percent because the growth was structural. Silver is the same story - it\'s a supply squeeze, not speculation. Chris can walk you through the data."',
-            '',
+            '"Think about NVIDIA in 2024... everyone expected a correction, yet it jumped another 60 percent because the growth was structural. Silver is the same story — it\'s a supply squeeze, not speculation. Chris can walk you through the data."',
             '"Do you have 5 minutes later today or tomorrow?"',
             '',
             'OBJECTION: What is the play?',
             '"Chris recommends an 8-week dollar-cost averaging strategy to move before the supply squeeze fully takes hold. Even Rick Harrison from Pawn Stars said last weekend he can\'t keep a single ounce of silver in his shop."',
-            '',
             '"Would later today or tomorrow work for a quick call with Chris?"',
             '',
             'OBJECTION: Not interested',
-            '"No problem at all. Thanks for calling Corventa Metals - have a great day."',
-            '(End call.)',
+            '"No problem at all. Thanks for calling Corventa Metals — have a great day."',
             '',
-            'PHASE 4 - QUALIFY',
-            '(Run immediately after day/time confirmed - keep tempo high)',
+            'QUALIFY (run immediately after day/time confirmed):',
             '"Just a couple quick questions before I confirm. Have you ever purchased physical precious metals before?"',
-            '(Wait)',
-            '"Got it... gold, silver, or platinum?"',
-            '(Wait)',
+            '(Wait) "Got it... gold, silver, or platinum?"',
             '"And in terms of timing... if something made sense, are you in a position to make an investment? We also place metals in tax-sheltered retirement accounts."',
-            '(Wait)',
             '',
-            'PHASE 5 - CLOSE',
+            'CLOSE:',
             '"Perfect... I\'ve got you all set. Chris will give you a call at the time we discussed."',
             '"In the meantime, would you like his bi-weekly newsletter? Last issue has that Rick Harrison interview I mentioned."',
-            '',
-            'IF YES:',
-            '"Perfect, sending that over now."',
-            '(Call send_newsletter)',
-            '',
-            '"Have a great day!"',
-            '(Call book_appointment with day, time_of_day, and notes from qualifier answers.)'
+            'IF YES: "Perfect, sending that over now." (Call send_newsletter).',
+            '"Have a great day!" (Call book_appointment).',
           ].join('\n');
 
           const prompt = isInbound ? inboundPrompt : outboundPrompt;
@@ -205,24 +190,20 @@ wss.on('connection', (ws, req) => {
           const settings = {
             type: 'Settings',
             audio: {
-              input: { encoding: 'mulaw', sample_rate: 8000 },
+              input:  { encoding: 'mulaw', sample_rate: 8000 },
               output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
             },
             agent: {
               listen: {
                 provider: {
                   type: 'deepgram',
-                  model: 'flux-general-en',
-                  version: 'v2',
-                  endpointing: 800,
-                  utterance_end_ms: 2000,
-                  vad_events: false
+                  model: 'nova-2',
                 }
               },
               think: {
                 provider: {
                   type: 'open_ai',
-                  model: 'gpt-4.1-nano'
+                  model: 'gpt-4o-mini',
                 },
                 prompt: prompt,
                 functions: [
@@ -232,19 +213,9 @@ wss.on('connection', (ws, req) => {
                     parameters: {
                       type: 'object',
                       properties: {
-                        day: {
-                          type: 'string',
-                          description: 'The day they agreed to e.g. today, tomorrow, Monday, March 15th'
-                        },
-                        time_of_day: {
-                          type: 'string',
-                          enum: ['AM', 'PM'],
-                          description: 'Morning or afternoon'
-                        },
-                        notes: {
-                          type: 'string',
-                          description: 'Qualifier answers: prior metals purchased, liquidity status, retirement account interest'
-                        }
+                        day:         { type: 'string', description: 'The day they agreed to e.g. today, tomorrow, Monday, March 15th' },
+                        time_of_day: { type: 'string', enum: ['AM', 'PM'], description: 'Morning or afternoon' },
+                        notes:       { type: 'string', description: 'Qualifier answers: prior metals purchased, liquidity status, retirement account interest' }
                       },
                       required: ['day', 'time_of_day']
                     }
@@ -255,10 +226,7 @@ wss.on('connection', (ws, req) => {
                     parameters: {
                       type: 'object',
                       properties: {
-                        confirmed: {
-                          type: 'boolean',
-                          description: 'Always true when called'
-                        }
+                        confirmed: { type: 'boolean', description: 'Always true when called' }
                       },
                       required: ['confirmed']
                     }
@@ -269,17 +237,12 @@ wss.on('connection', (ws, req) => {
                 provider: {
                   type: 'cartesia',
                   model_id: 'sonic-2',
-                  voice: {
-                    mode: 'id',
-                    id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca'
-                  },
+                  voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' },
                   language: 'en'
                 },
                 endpoint: {
                   url: 'https://api.cartesia.ai/tts/bytes',
-                  headers: {
-                    'x-api-key': process.env.CARTESIA_API_KEY || 'sk_car_rKBM7SnrM1aLwSBpfwjj5w'
-                  }
+                  headers: { 'x-api-key': process.env.CARTESIA_API_KEY || 'sk_car_rKBM7SnrM1aLwSBpfwjj5w' }
                 }
               }
             }
