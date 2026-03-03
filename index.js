@@ -43,6 +43,7 @@ wss.on('connection', (ws, req) => {
   const sendSettings = () => {
     if (settingsSent) return;
     settingsSent = true;
+    console.log('[SETTINGS] Sending... streamSid=' + streamSid + ' isInbound=' + isInbound);
 
     const outboundPrompt = [
       'Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.',
@@ -171,14 +172,23 @@ wss.on('connection', (ws, req) => {
     }, 5000);
 
     if (isInbound) {
-      setTimeout(() => {
+      console.log('[INBOUND] Will inject greeting...');
+      // Retry until Deepgram is ready — max 10 attempts x 300ms = 3s
+      let attempts = 0;
+      const greetInterval = setInterval(() => {
+        attempts++;
         if (dgWs.readyState === WebSocket.OPEN) {
+          clearInterval(greetInterval);
+          console.log('[INBOUND] Injecting greeting after ' + attempts + ' attempt(s)');
           dgWs.send(JSON.stringify({
             type: 'InjectAgentMessage',
             message: 'Thank you for calling Corventa Metals... this is Orion. How can I help you today?'
           }));
+        } else if (attempts >= 10) {
+          clearInterval(greetInterval);
+          console.error('[INBOUND] Greeting failed — Deepgram not ready after 3s');
         }
-      }, 500);
+      }, 300);
     }
   };
 
