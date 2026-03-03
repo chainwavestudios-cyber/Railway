@@ -6,21 +6,24 @@ import fetch from 'node-fetch';
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ noServer: true });
 
 process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:', err));
 process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
 
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
+app.get('/', (req, res) => res.status(200).send('OK'));
 
+// Handle WebSocket upgrades manually — bypasses Express routing
 server.on('upgrade', (request, socket, head) => {
+  console.log('[UPGRADE] WebSocket upgrade request received');
   wss.handleUpgrade(request, socket, head, (ws) => {
     wss.emit('connection', ws, request);
   });
 });
 
 wss.on('connection', (ws, req) => {
-  const parameters = url.parse(req.url, true).query;
+  const parameters    = url.parse(req.url, true).query;
   const firstName      = parameters.f      || 'there';
   const leadId         = parameters.l      || 'unknown';
   const campaignId     = parameters.c      || 'unknown';
@@ -30,12 +33,12 @@ wss.on('connection', (ws, req) => {
 
   console.log('[CONNECT] Lead: ' + leadId + ' | Campaign: ' + campaignId + ' | Inbound: ' + isInbound);
 
-  let streamSid        = null;
+  let streamSid         = null;
   let keepAliveInterval = null;
-  let settingsSent     = false;
-  let audioQueue       = [];
+  let settingsSent      = false;
+  let audioQueue        = [];
 
-  // ── Pre-connect to Deepgram immediately — don't wait for Twilio 'start' ──
+  // Pre-connect to Deepgram immediately on WebSocket open
   const dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse', {
     headers: { Authorization: 'Token ' + deepgramApiKey }
   });
@@ -173,7 +176,6 @@ wss.on('connection', (ws, req) => {
 
     if (isInbound) {
       console.log('[INBOUND] Will inject greeting...');
-      // Retry until Deepgram is ready — max 10 attempts x 300ms = 3s
       let attempts = 0;
       const greetInterval = setInterval(() => {
         attempts++;
@@ -194,7 +196,6 @@ wss.on('connection', (ws, req) => {
 
   dgWs.on('open', () => {
     console.log('[OK] Deepgram pre-connected');
-    // Send settings immediately if we already have a streamSid, otherwise wait
     if (streamSid) sendSettings();
   });
 
@@ -206,7 +207,6 @@ wss.on('connection', (ws, req) => {
           streamSid,
           media: { payload: data.toString('base64') }
         }));
-        // Flush any queued audio
         while (audioQueue.length > 0) {
           dgWs.send(audioQueue.shift());
         }
@@ -257,7 +257,6 @@ wss.on('connection', (ws, req) => {
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
         console.log('[START] Stream: ' + streamSid);
-        // Send settings now if Deepgram already open, otherwise open handler will do it
         if (dgWs.readyState === WebSocket.OPEN) {
           sendSettings();
         }
