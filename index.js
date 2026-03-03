@@ -154,7 +154,8 @@ wss.on('connection', (ws, req) => {
           provider: {
             type: 'cartesia',
             model_id: 'sonic-3',
-            voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' }
+            voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' },
+            speed: 0.5
           }
         }
       }
