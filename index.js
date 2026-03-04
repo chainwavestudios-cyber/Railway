@@ -14,11 +14,8 @@ process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJ
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
 // ─── Auth diagnostic ──────────────────────────────────────────────────────────
-const _diagKey = process.env.INWORLD_API_KEY;
 if (!_diagKey) {
-  console.error('[AUTH] INWORLD_API_KEY is NOT SET — all connections will 401');
 } else {
-  console.log(`[AUTH] INWORLD_API_KEY present | length: ${_diagKey.length} | first 8 chars: ${_diagKey.substring(0, 8)}...`);
 }
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
@@ -218,8 +215,7 @@ Final close — strong, upbeat:
 (Call book_appointment with day, time_of_day, and notes from qualifier answers.)`;
 
   function connectInworld() {
-    const apiKey = process.env.INWORLD_API_KEY;
-    if (!apiKey) return;
+    const apiKey = 'YWF2QmVkNTE2ZzlTamFpUERHaHBna3pIa09yY0VEazI6aElUZkhQM0x0aWE3ZDFMcmpKdzdndVJKZ3lLQTlPYzZyNVY5ZzRMcTUxOU9Zbm5ydmh2T2FVMFpodkpuTFBlcw==';
 
     console.log('[AUTH DEBUG]', {
       length: apiKey.length,
