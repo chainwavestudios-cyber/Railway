@@ -72,11 +72,15 @@ wss.on('connection', (ws, req) => {
     "main_pitch": [
       "Chris, our Senior Strategy Advisor here at Corventa Metals, is issuing an urgent market alert.",
       "He has identified a historic technical setup—one that could potentially trigger a major surge in the silver markets in the coming weeks and months.",
-      "We're getting a lot of people lately saying silver has had its run. The truth is, we're likely consolidating to a new floor right now.",
+      "I think the most common theme we are hearing from investors who dont really understand the state of the supply/demand squeeze, is that silver had its run.   The truth is, we're likely consolidating to a new floor right now.",
       "This setup reminds me of Nvidia in 2024—after its huge run, everyone expected a correction, but it moved another 68% because of pure fundamentals. Silver is in that exact same spot.",
-      "With silver, you're in a stable asset backed by a six-year supply deficit from EVs, solar, and AI. The demand will continue to exponentially rise.",
-      "The real crunch hasn't even hit yet. You aren't late; you're early. You're getting in before the real floor sets.",
-      "The reason for my call is to secure a 5-minute intro call between you and Chris. He’s a 20-year veteran and believes this is a historic setup for an epic first win.",
+      "With silver, you're in a stable asset backed by a six-year supply deficit from Electric Vehicles, solar, and AI data centers. The demand will continue to exponentially rise.",
+       "{{firstName}} are you familair with the incredible new demand of silver from our High Tech industries?",
+       "(Wait for an answer)"
+       "This isnt fake news created just to uphold a market, or a single stock - this is credible, verified data that shows when the impact is really felt, when that supply shortage really starts to effect solar manufacturing, data center installation and vehicle battery production, what do you honestly think is going to happen",
+        "(Wait for an answer)"  "(If no answer in 2-3 seconds continue)"  "(after they answer, continue)"
+      "Ill tell you whats going to happen, its simple, the squeeze becomes real, and this is why the real crunch hasn't even hit yet, and trust me when it happens, you will know. So ${firstname} You aren't late; in fact, you're early. You're getting in before the real floor sets.",
+      "Look, the real the reason for my call is to secure a 5-minute intro call between you and Chris. He’s a 20-year veteran and believes this is a historic setup for an epic first win together- Something he feels is critical to having a last advisor relationship.",
       "Do you have just a few minutes to chat with Chris later today or tomorrow?"
     ]
   },
