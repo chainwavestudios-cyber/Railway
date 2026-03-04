@@ -87,13 +87,6 @@ wss.on('connection', (ws, req) => {
   let silenceTimer = null;
   let hasAudio     = false;
 
-  // Resilience additions
-  let reconnectAttempts = 0;
-  let reconnectTimer = null;
-  let callActive = true;
-  let sessionTimeout = null;
-  const MAX_QUEUE_SIZE = 200;
-
   function scheduleCommit() {
     if (silenceTimer) clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
@@ -112,7 +105,7 @@ wss.on('connection', (ws, req) => {
     return count / mulawBuf.length > 0.95;
   }
 
-  const prompt = `<<< YOUR ENTIRE ORIGINAL PROMPT BLOCK REMAINS HERE EXACTLY AS YOU PROVIDED >>>`;
+  const prompt = `<<< YOUR ORIGINAL PROMPT REMAINS UNCHANGED HERE >>>`;
 
   function connectInworld() {
     const apiKey = process.env.INWORLD_API_KEY;
@@ -124,40 +117,29 @@ wss.on('connection', (ws, req) => {
       last8: apiKey.substring(apiKey.length - 8)
     });
 
-    const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=voice-${Date.now()}&protocol=realtime`;
+    // 🔥 HARD CODED SESSION KEY
+    const wsUrl = 'wss://api.inworld.ai/api/v1/realtime/session?key=test&protocol=realtime';
 
     inworldWs = new WebSocket(wsUrl, {
       headers: { Authorization: `Basic ${apiKey}` }
     });
 
     inworldWs.on('open', () => {
-      reconnectAttempts = 0;
-
-      keepAlive = setInterval(() => {
-        if (inworldWs.readyState === WebSocket.OPEN)
-          inworldWs.send(JSON.stringify({ type: 'ping' }));
-      }, 15000);
-
-      sessionTimeout = setTimeout(() => {
-        if (!inworldReady) {
-          console.error('[INWORLD] session.created timeout — closing socket');
-          inworldWs.close();
-        }
-      }, 5000);
+      console.log('[INWORLD] WebSocket open');
     });
 
     inworldWs.on('message', (data) => {
+      console.log('[INWORLD] RAW MESSAGE:', data.toString());
+
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }
 
       if (msg.type === 'session.created') {
-        if (sessionTimeout) clearTimeout(sessionTimeout);
-
         inworldWs.send(JSON.stringify({
           type: 'session.update',
           session: {
             type: 'realtime',
-            modelId: 'auto', // temporarily auto for auth isolation
+            modelId: 'auto',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
             audio: {
@@ -183,16 +165,6 @@ wss.on('connection', (ws, req) => {
 
       if (msg.type === 'session.updated') {
         inworldReady = true;
-
-        if (audioQueue.length) {
-          for (const frame of audioQueue) {
-            inworldWs.send(JSON.stringify({
-              type: 'input_audio_buffer.append',
-              audio: frame.toString('base64')
-            }));
-          }
-          audioQueue = [];
-        }
       }
 
       if (msg.type === 'response.output_audio.delta' && msg.delta) {
@@ -210,14 +182,6 @@ wss.on('connection', (ws, req) => {
 
     inworldWs.on('close', (code, reason) => {
       console.warn(`[INWORLD] Closed (${code}) ${reason}`);
-      if (keepAlive) clearInterval(keepAlive);
-      if (!callActive) return;
-
-      if (reconnectAttempts < 3) {
-        reconnectAttempts++;
-        const delay = 1000 * reconnectAttempts;
-        reconnectTimer = setTimeout(() => connectInworld(), delay);
-      }
     });
 
     inworldWs.on('error', (err) => {
@@ -239,11 +203,7 @@ wss.on('connection', (ws, req) => {
 
       const pcmBuf = mulawToPcm16_24k(mulawBuf);
 
-      if (!inworldReady || !inworldWs || inworldWs.readyState !== WebSocket.OPEN) {
-        if (audioQueue.length < MAX_QUEUE_SIZE) {
-          audioQueue.push(pcmBuf);
-        }
-      } else {
+      if (inworldReady && inworldWs?.readyState === WebSocket.OPEN) {
         if (!isSilent(mulawBuf)) hasAudio = true;
         inworldWs.send(JSON.stringify({
           type: 'input_audio_buffer.append',
@@ -252,25 +212,11 @@ wss.on('connection', (ws, req) => {
         scheduleCommit();
       }
     }
-
-    if (msg.event === 'stop') {
-      if (silenceTimer) clearTimeout(silenceTimer);
-      if (keepAlive) clearInterval(keepAlive);
-      if (inworldWs) inworldWs.close();
-
-      audioQueue = [];
-      callActive = false;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-    }
   });
 
   ws.on('close', () => {
     if (keepAlive) clearInterval(keepAlive);
     if (inworldWs) inworldWs.close();
-
-    audioQueue = [];
-    callActive = false;
-    if (reconnectTimer) clearTimeout(reconnectTimer);
   });
 });
 
