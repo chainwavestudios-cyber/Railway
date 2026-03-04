@@ -3,7 +3,7 @@ import http from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
 import url from 'url';
 import fetch from 'node-fetch';
-import { randomUUID } from 'crypto';
+
 
 const app = express();
 const server = http.createServer(app);
@@ -13,6 +13,14 @@ process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:',
 process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
 
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
+
+// ─── Auth diagnostic (runs once on startup) ───────────────────────────────────
+const _diagKey = process.env.INWORLD_API_KEY;
+if (!_diagKey) {
+  console.error('[AUTH] INWORLD_API_KEY is NOT SET — all connections will 401');
+} else {
+  console.log(`[AUTH] INWORLD_API_KEY present | length: ${_diagKey.length} | first 8 chars: ${_diagKey.substring(0, 8)}...`);
+}
 
 // ─── G.711 mulaw decode table (ITU-T standard) ───────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -28,8 +36,6 @@ const MULAW_DECODE = new Int16Array(256);
   }
 })();
 
-// FIX: Corrected interpolation — j goes 0,1,2 out of 3 steps toward next sample
-// This prevents audio drift caused by never reaching the current sample's value
 function mulawToPcm16_24k(mulawBuf) {
   const len = mulawBuf.length;
   const out = Buffer.allocUnsafe(len * 3 * 2);
@@ -38,8 +44,6 @@ function mulawToPcm16_24k(mulawBuf) {
   for (let i = 0; i < len; i++) {
     const curr = MULAW_DECODE[mulawBuf[i]];
     for (let j = 0; j < 3; j++) {
-      // j/3 → 0, 0.333, 0.666 — arrives at curr on next iteration's prev
-      // Fixed: use (j+1)/3 so samples step toward curr correctly
       const s = Math.round(prev + (curr - prev) * ((j + 1) / 3));
       out.writeInt16LE(Math.max(-32768, Math.min(32767, s)), outPos);
       outPos += 2;
@@ -97,16 +101,15 @@ wss.on('connection', (ws, req) => {
       hasAudio = false;
       inworldWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
       inworldWs.send(JSON.stringify({ type: 'response.create' }));
-    }, 800); // 800ms — Twilio sends ~50 packets/sec so this is ~40 packets of silence
+    }, 800);
   }
 
-  // Detect silence by checking if mulaw payload is near-silent (all ~0x7F = mulaw silence)
   function isSilent(mulawBuf) {
     let count = 0;
     for (let i = 0; i < mulawBuf.length; i++) {
       if (mulawBuf[i] === 0x7F || mulawBuf[i] === 0xFF) count++;
     }
-    return count / mulawBuf.length > 0.95; // 95% silence bytes = silent frame
+    return count / mulawBuf.length > 0.95;
   }
 
   const prompt = `Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
@@ -218,82 +221,22 @@ Final close — strong, upbeat:
 
   // ── Connect to Inworld Realtime API ─────────────────────────────────────
   function connectInworld() {
-    const apiKey    = process.env.INWORLD_API_KEY;
+    const apiKey = process.env.INWORLD_API_KEY;
     if (!apiKey) {
-      console.error('[INWORLD] INWORLD_API_KEY not set');
+      console.error('[INWORLD] INWORLD_API_KEY not set — cannot connect');
       return;
     }
-    const authHeader = `Basic ${apiKey}`;
-    const sessionId = randomUUID();
-    const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`;
-    console.log('[INWORLD] Connecting | session: ' + sessionId);
+
+    // Key is already base64-encoded — use directly, DO NOT re-encode
+    const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=voice-${Date.now()}&protocol=realtime`;
+    console.log(`[INWORLD] Connecting | key length: ${apiKey.length} | prefix: ${apiKey.substring(0, 8)}...`);
 
     inworldWs = new WebSocket(wsUrl, {
-      headers: { 'Authorization': authHeader }
+      headers: { Authorization: `Basic ${apiKey}` }
     });
 
     inworldWs.on('open', () => {
-      console.log('[INWORLD] Connected');
-
-      // FIX 1: Added model at top level so LLM activates correctly
-      // FIX 2: Added input_audio_transcription at top level (required by Inworld protocol)
-      // FIX 3: Added explicit input audio format definition
-      // FIX 4: Switched to server_vad with threshold 0.4 for reliable "Hello" detection
-      // FIX 5: Added explicit output format definition to guarantee 24kHz PCM back
-      inworldWs.send(JSON.stringify({
-        type: 'session.update',
-        session: {
-          model: 'llama-3.3-70b-versatile',
-          output_modalities: ['audio', 'text'],
-          instructions: prompt,
-          audio: {
-            input: {
-              transcription: {
-                model: 'assemblyai/universal-streaming-multilingual'
-              },
-              turn_detection: {
-                type: 'semantic_vad',
-                eagerness: 'high',
-                create_response: true,
-                interrupt_response: true
-              }
-            },
-            output: {
-              voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
-              model: 'inworld-tts-1.5-max',
-              speed: 1.0
-            }
-          },
-          tools: [
-            {
-              type: 'function',
-              name: 'book_appointment',
-              description: 'Call this as soon as the lead confirms a day and AM or PM. Include qualifier answers in notes.',
-              parameters: {
-                type: 'object',
-                properties: {
-                  day: { type: 'string', description: 'Day they agreed to e.g. today, tomorrow, Monday' },
-                  time_of_day: { type: 'string', enum: ['AM', 'PM'] },
-                  notes: { type: 'string', description: 'Qualifier answers: prior metals, liquidity, retirement interest' }
-                },
-                required: ['day', 'time_of_day']
-              }
-            },
-            {
-              type: 'function',
-              name: 'send_newsletter',
-              description: "Call this if the lead agreed to receive Chris's bi-weekly newsletter.",
-              parameters: {
-                type: 'object',
-                properties: {
-                  confirmed: { type: 'boolean' }
-                },
-                required: ['confirmed']
-              }
-            }
-          ]
-        }
-      }));
+      console.log('[INWORLD] Connected — waiting for session.created');
 
       keepAlive = setInterval(() => {
         if (inworldWs && inworldWs.readyState === WebSocket.OPEN) {
@@ -309,8 +252,68 @@ Final close — strong, upbeat:
 
       console.log('[INWORLD RAW]', JSON.stringify(msg).substring(0, 800));
 
+      // ── Send session.update only after session.created fires ─────────────
+      if (msg.type === 'session.created') {
+        console.log('[INWORLD] Session created — sending config');
+        inworldWs.send(JSON.stringify({
+          type: 'session.update',
+          session: {
+            type: 'realtime',
+            modelId: 'openai/gpt-4o-mini',
+            output_modalities: ['audio', 'text'],
+            instructions: prompt,
+            audio: {
+              input: {
+                format: { type: 'audio/pcm', rate: 24000 },
+                transcription: { model: 'assemblyai/universal-streaming-multilingual' },
+                turn_detection: {
+                  type: 'semantic_vad',
+                  eagerness: 'high',
+                  create_response: true,
+                  interrupt_response: true
+                }
+              },
+              output: {
+                format: { type: 'audio/pcm', rate: 24000 },
+                voice: 'Dennis',
+                model: 'inworld-tts-1.5-mini',
+                speed: 1.0
+              }
+            },
+            tools: [
+              {
+                type: 'function',
+                name: 'book_appointment',
+                description: 'Call this as soon as the lead confirms a day and AM or PM. Include qualifier answers in notes.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    day: { type: 'string', description: 'Day they agreed to e.g. today, tomorrow, Monday' },
+                    time_of_day: { type: 'string', enum: ['AM', 'PM'] },
+                    notes: { type: 'string', description: 'Qualifier answers: prior metals, liquidity, retirement interest' }
+                  },
+                  required: ['day', 'time_of_day']
+                }
+              },
+              {
+                type: 'function',
+                name: 'send_newsletter',
+                description: "Call this if the lead agreed to receive Chris's bi-weekly newsletter.",
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    confirmed: { type: 'boolean' }
+                  },
+                  required: ['confirmed']
+                }
+              }
+            ]
+          }
+        }));
+      }
+
       if (msg.type === 'session.updated') {
-        const vad = msg.session?.audio?.input?.turn_detection?.type || msg.session?.turn_detection?.type || 'unknown';
+        const vad = msg.session?.audio?.input?.turn_detection?.type || 'unknown';
         const voice = msg.session?.audio?.output?.voice || 'unknown';
         const instructions_len = msg.session?.instructions?.length || 0;
         console.log(`[INWORLD] Session updated | VAD: ${vad} | Voice: ${voice} | Instructions: ${instructions_len} chars`);
@@ -411,7 +414,6 @@ Final close — strong, upbeat:
         if (!inworldReady || !inworldWs || inworldWs.readyState !== WebSocket.OPEN) {
           audioQueue.push(pcmBuf);
         } else {
-          // Only mark hasAudio and schedule commit if this frame has actual speech
           if (!isSilent(mulawBuf)) {
             if (!hasAudio) console.log('[VAD] Speech detected');
             hasAudio = true;
