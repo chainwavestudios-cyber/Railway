@@ -202,12 +202,11 @@ Final close — strong, upbeat:
     }
     // Session ID is a unique UUID per call; auth header encodes 'api-key:<key>' in base64
     const sessionId = randomUUID();
-    const authHeader = Buffer.from('api-key:' + apiKey).toString('base64');
     const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`;
     console.log('[INWORLD] Connecting | session: ' + sessionId);
 
     inworldWs = new WebSocket(wsUrl, {
-      headers: { 'Authorization': `Basic ${authHeader}` }
+      headers: { 'Authorization': `Basic ${apiKey}` }
     });
 
     inworldWs.on('open', () => {
