@@ -98,7 +98,7 @@ wss.on('connection', (ws, req) => {
   const firstName = parameters.f || 'Philip';
   const leadId = parameters.l || 'unknown';
   const campaignId = parameters.c || 'unknown';
-  const inworldApiKey = parameters.k || process.env.INWORLD_API_KEY;
+  const inworldApiKey = process.env.INWORLD_API_KEY || parameters.k;
   const email = parameters.e || '';
   const isInbound = parameters.i === '1';
 
@@ -424,10 +424,19 @@ ALWAYS include day and time_of_day params in book_appointment.`;
           console.log('[MEDIA] Dropped — Inworld not ready, state:', inworldWs ? inworldWs.readyState : 'null');
         } else {
           mediaCount++;
-          if (mediaCount % 50 === 1) console.log('[MEDIA] Packets sent to Inworld:', mediaCount);
           const mulawBuf = Buffer.from(msg.media.payload, 'base64');
           if (mulawBuf.length > 0) {
             const pcm24k = twilioToInworld(mulawBuf);
+            if (mediaCount === 1) {
+              // Log first packet stats to verify audio quality
+              let max = 0;
+              for (let i = 0; i < pcm24k.length; i += 2) {
+                const s = Math.abs(pcm24k.readInt16LE(i));
+                if (s > max) max = s;
+              }
+              console.log('[AUDIO] First packet — mulaw bytes:', mulawBuf.length, '| pcm24k bytes:', pcm24k.length, '| max amplitude:', max);
+            }
+            if (mediaCount % 50 === 1) console.log('[MEDIA] Packets sent to Inworld:', mediaCount);
             inworldWs.send(JSON.stringify({
               type: 'input_audio_buffer.append',
               audio: pcm24k.toString('base64')
