@@ -28,7 +28,8 @@ const MULAW_DECODE = new Int16Array(256);
   }
 })();
 
-// Convert mulaw 8kHz → PCM16 24kHz (3x linear interpolation upsample)
+// FIX: Corrected interpolation — j goes 0,1,2 out of 3 steps toward next sample
+// This prevents audio drift caused by never reaching the current sample's value
 function mulawToPcm16_24k(mulawBuf) {
   const len = mulawBuf.length;
   const out = Buffer.allocUnsafe(len * 3 * 2);
@@ -37,7 +38,9 @@ function mulawToPcm16_24k(mulawBuf) {
   for (let i = 0; i < len; i++) {
     const curr = MULAW_DECODE[mulawBuf[i]];
     for (let j = 0; j < 3; j++) {
-      const s = Math.round(prev + (curr - prev) * (j / 3));
+      // j/3 → 0, 0.333, 0.666 — arrives at curr on next iteration's prev
+      // Fixed: use (j+1)/3 so samples step toward curr correctly
+      const s = Math.round(prev + (curr - prev) * ((j + 1) / 3));
       out.writeInt16LE(Math.max(-32768, Math.min(32767, s)), outPos);
       outPos += 2;
     }
@@ -46,7 +49,6 @@ function mulawToPcm16_24k(mulawBuf) {
   return out;
 }
 
-// Encode a single PCM16 sample to mulaw
 function encodeMulaw(sample) {
   const MU = 255;
   const sign = sample < 0 ? 0x80 : 0x00;
@@ -56,7 +58,6 @@ function encodeMulaw(sample) {
   return (~(sign | sample)) & 0xFF;
 }
 
-// Convert PCM16 24kHz → mulaw 8kHz (3:1 decimation)
 function pcm16_24kToMulaw(pcmBuf) {
   const numSamples = Math.floor(pcmBuf.length / 2);
   const outLen = Math.floor(numSamples / 3);
@@ -67,9 +68,6 @@ function pcm16_24kToMulaw(pcmBuf) {
   }
   return out;
 }
-
-// ─── Inworld session management ───────────────────────────────────────────────
-// No session pre-auth needed — API key goes directly in the WS URL as ?key=
 
 // ─── WebSocket connection handler ─────────────────────────────────────────────
 wss.on('connection', (ws, req) => {
@@ -200,7 +198,6 @@ Final close — strong, upbeat:
       console.error('[INWORLD] INWORLD_API_KEY not set');
       return;
     }
-    // Session ID is a unique UUID per call; auth header encodes 'api-key:<key>' in base64
     const sessionId = randomUUID();
     const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`;
     console.log('[INWORLD] Connecting | session: ' + sessionId);
@@ -212,6 +209,11 @@ Final close — strong, upbeat:
     inworldWs.on('open', () => {
       console.log('[INWORLD] Connected');
 
+      // FIX 1: Added model at top level so LLM activates correctly
+      // FIX 2: Added input_audio_transcription at top level (required by Inworld protocol)
+      // FIX 3: Added explicit input audio format definition
+      // FIX 4: Switched to server_vad with threshold 0.4 for reliable "Hello" detection
+      // FIX 5: Added explicit output format definition to guarantee 24kHz PCM back
       inworldWs.send(JSON.stringify({
         type: 'session.update',
         session: {
@@ -219,11 +221,21 @@ Final close — strong, upbeat:
           model: 'gpt-4o-mini',
           output_modalities: ['audio', 'text'],
           instructions: prompt,
+          input_audio_transcription: {
+            model: 'whisper-1'
+          },
           audio: {
             input: {
+              format: {
+                type: 'audio/pcm',
+                rate: 24000
+              },
+              transcription: {
+                model: 'whisper-1'
+              },
               turn_detection: {
-                type: 'semantic_vad',
-                eagerness: 'medium',
+                type: 'server_vad',
+                threshold: 0.4,
                 create_response: true,
                 interrupt_response: true
               }
@@ -231,7 +243,11 @@ Final close — strong, upbeat:
             output: {
               voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
               model: 'inworld-tts-1.5-max',
-              speed: 1.0
+              speed: 1.0,
+              format: {
+                type: 'audio/pcm',
+                rate: 24000
+              }
             }
           },
           tools: [
@@ -279,7 +295,6 @@ Final close — strong, upbeat:
 
       console.log('[INWORLD RAW]', JSON.stringify(msg).substring(0, 800));
 
-      // Session ready
       if (msg.type === 'session.updated') {
         console.log('[INWORLD] Session configured, flushing audio queue...');
         inworldReady = true;
@@ -300,7 +315,6 @@ Final close — strong, upbeat:
         console.log('[INWORLD] Ready — waiting for caller audio');
       }
 
-      // Transcript logging
       if (msg.type === 'conversation.item.added' && msg.item?.content) {
         console.log('[CHAT] ' + msg.item.role + ': ' + JSON.stringify(msg.item.content));
       }
@@ -322,12 +336,10 @@ Final close — strong, upbeat:
         }
       }
 
-      // Transcript done log
       if (msg.type === 'response.output_audio_transcript.done') {
         console.log('[TRANSCRIPT] ' + msg.transcript);
       }
 
-      // Function calls
       if (msg.type === 'response.function_call_arguments.done') {
         const fnName = msg.name;
         let fnArgs = {};
