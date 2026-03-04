@@ -263,7 +263,7 @@ ALWAYS include day and time_of_day params in book_appointment.`;
           `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`,
           {
             headers: {
-              Authorization: `Basic ${inworldApiKey}`
+              Authorization: `Basic ${Buffer.from('api-key:' + inworldApiKey).toString('base64')}`
             }
           }
         );
@@ -298,7 +298,10 @@ ALWAYS include day and time_of_day params in book_appointment.`;
                   audio: {
                     input: {
                       turn_detection: {
-                        type: 'semantic_vad',
+                        type: 'server_vad',
+                        threshold: 0.5,
+                        prefix_padding_ms: 300,
+                        silence_duration_ms: 500,
                         create_response: true,
                         interrupt_response: true
                       }
