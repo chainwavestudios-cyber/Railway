@@ -214,6 +214,9 @@ Final close — strong, upbeat:
       // FIX 3: Added explicit input audio format definition
       // FIX 4: Switched to server_vad with threshold 0.4 for reliable "Hello" detection
       // FIX 5: Added explicit output format definition to guarantee 24kHz PCM back
+      // NOTE: Inworld ignores nested audio.input overrides on session.update.
+      // turn_detection and transcription must be at the TOP LEVEL of session.
+      // Confirmed by: session.updated still showing semantic_vad despite nested override.
       inworldWs.send(JSON.stringify({
         type: 'session.update',
         session: {
@@ -221,33 +224,27 @@ Final close — strong, upbeat:
           model: 'gpt-4o-mini',
           output_modalities: ['audio', 'text'],
           instructions: prompt,
+
+          // Top-level transcription (activates Whisper on incoming audio)
           input_audio_transcription: {
             model: 'whisper-1'
           },
+
+          // Top-level VAD override — this is what Inworld actually reads
+          turn_detection: {
+            type: 'server_vad',
+            threshold: 0.4,
+            silence_duration_ms: 500,
+            create_response: true,
+            interrupt_response: true
+          },
+
+          // Voice/TTS settings still go in audio.output
           audio: {
-            input: {
-              format: {
-                type: 'audio/pcm',
-                rate: 24000
-              },
-              transcription: {
-                model: 'whisper-1'
-              },
-              turn_detection: {
-                type: 'server_vad',
-                threshold: 0.4,
-                create_response: true,
-                interrupt_response: true
-              }
-            },
             output: {
               voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
               model: 'inworld-tts-1.5-max',
-              speed: 1.0,
-              format: {
-                type: 'audio/pcm',
-                rate: 24000
-              }
+              speed: 1.0
             }
           },
           tools: [
@@ -296,7 +293,9 @@ Final close — strong, upbeat:
       console.log('[INWORLD RAW]', JSON.stringify(msg).substring(0, 800));
 
       if (msg.type === 'session.updated') {
-        console.log('[INWORLD] Session configured, flushing audio queue...');
+        // Log VAD type so we can confirm the override took effect
+        const vadType = msg.session?.turn_detection?.type || msg.session?.audio?.input?.turn_detection?.type || 'unknown';
+        console.log('[INWORLD] Session configured | VAD: ' + vadType);
         inworldReady = true;
 
         if (audioQueue.length > 0) {
