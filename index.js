@@ -69,6 +69,7 @@ wss.on('connection', (browser) => {
   let inworld = null;
   let sessionReady = false;
   let reconnectAttempts = 0;
+  let audioQueue = [];
   let silenceTimer = null;
   let awaitingResponse = false;
   let leadId = 'unknown';
@@ -220,7 +221,6 @@ Final close — strong, upbeat:
 
       if (msg.type === 'session.created') {
         clearTimeout(sessionTimeout);
-        sessionReady = true;
         reconnectAttempts = 0;
         console.log('[INWORLD] Session created — sending config');
 
@@ -285,6 +285,34 @@ Final close — strong, upbeat:
         const vad = msg.session?.audio?.input?.turn_detection?.type || 'unknown';
         const voice = msg.session?.audio?.output?.voice || 'unknown';
         console.log(`[INWORLD] Session updated | VAD: ${vad} | Voice: ${voice}`);
+        sessionReady = true;
+
+        if (audioQueue.length > 0) {
+          console.log(`[QUEUE] Flushing ${audioQueue.length} buffered audio packets`);
+          for (const chunk of audioQueue) {
+            if (inworld.readyState === WebSocket.OPEN) {
+              inworld.send(JSON.stringify({
+                type: 'input_audio_buffer.append',
+                audio: chunk.toString('base64'),
+              }));
+            }
+          }
+          audioQueue = [];
+
+          // Start silence fallback after flush — in case caller already stopped talking
+          if (silenceTimer) clearTimeout(silenceTimer);
+          silenceTimer = setTimeout(() => {
+            if (!inworld || inworld.readyState !== WebSocket.OPEN) return;
+            if (!sessionReady) return;
+            if (!awaitingResponse) {
+              console.log('[POST-FLUSH FALLBACK] Committing buffered audio');
+              awaitingResponse = true;
+              inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+              inworld.send(JSON.stringify({ type: 'response.create' }));
+            }
+          }, 800);
+        }
+
         console.log('[INWORLD] Ready — waiting for caller audio');
       }
 
@@ -375,10 +403,13 @@ Final close — strong, upbeat:
     }
 
     if (msg.event === 'media') {
-      if (!sessionReady || !inworld || inworld.readyState !== WebSocket.OPEN) return;
-
       const mulawBuf = Buffer.from(msg.media.payload, 'base64');
       const pcmBuf = mulawToPcm16_24k(mulawBuf);
+
+      if (!sessionReady || !inworld || inworld.readyState !== WebSocket.OPEN) {
+        audioQueue.push(pcmBuf);
+        return;
+      }
 
       inworld.send(JSON.stringify({
         type: 'input_audio_buffer.append',
@@ -403,6 +434,7 @@ Final close — strong, upbeat:
 
     if (msg.event === 'stop') {
       console.log('[STOP] Stream stopped:', streamSid);
+      audioQueue = [];
       if (silenceTimer) clearTimeout(silenceTimer);
       if (inworld) inworld.close();
     }
@@ -410,6 +442,7 @@ Final close — strong, upbeat:
 
   browser.on('close', () => {
     console.log('[DISC] Client disconnected');
+    audioQueue = [];
     if (silenceTimer) clearTimeout(silenceTimer);
     if (inworld) inworld.close();
   });
