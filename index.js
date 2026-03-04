@@ -92,6 +92,7 @@ wss.on('connection', (ws, req) => {
   let inworldWs = null;
   let streamSid = null;
   let keepAliveInterval = null;
+  let mediaCount = 0;
 
   ws.on('message', async (message) => {
     try {
@@ -405,15 +406,20 @@ ALWAYS include day and time_of_day params in book_appointment.`;
       // -----------------------------------------------------------------------
       // MEDIA: Forward Twilio audio → Inworld (after converting format)
       // -----------------------------------------------------------------------
-      if (msg.event === 'media' && inworldWs && inworldWs.readyState === WebSocket.OPEN) {
-        const mulawBuf = Buffer.from(msg.media.payload, 'base64');
-        if (mulawBuf.length > 0) {
-          // Convert mulaw 8kHz → PCM16 24kHz for Inworld
-          const pcm24k = twilioToInworld(mulawBuf);
-          inworldWs.send(JSON.stringify({
-            type: 'input_audio_buffer.append',
-            audio: pcm24k.toString('base64')
-          }));
+      if (msg.event === 'media') {
+        if (!inworldWs || inworldWs.readyState !== WebSocket.OPEN) {
+          console.log('[MEDIA] Dropped — Inworld not ready, state:', inworldWs ? inworldWs.readyState : 'null');
+        } else {
+          mediaCount++;
+          if (mediaCount % 50 === 1) console.log('[MEDIA] Packets sent to Inworld:', mediaCount);
+          const mulawBuf = Buffer.from(msg.media.payload, 'base64');
+          if (mulawBuf.length > 0) {
+            const pcm24k = twilioToInworld(mulawBuf);
+            inworldWs.send(JSON.stringify({
+              type: 'input_audio_buffer.append',
+              audio: pcm24k.toString('base64')
+            }));
+          }
         }
       }
 
