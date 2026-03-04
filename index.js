@@ -70,6 +70,7 @@ wss.on('connection', (browser) => {
   let sessionReady = false;
   let reconnectAttempts = 0;
   let audioQueue = [];
+  let speechDuration = 0;
   let silenceTimer = null;
   let awaitingResponse = false;
   let leadId = 'unknown';
@@ -299,18 +300,8 @@ Final close — strong, upbeat:
           }
           audioQueue = [];
 
-          // Start silence fallback after flush — in case caller already stopped talking
-          if (silenceTimer) clearTimeout(silenceTimer);
-          silenceTimer = setTimeout(() => {
-            if (!inworld || inworld.readyState !== WebSocket.OPEN) return;
-            if (!sessionReady) return;
-            if (!awaitingResponse) {
-              console.log('[POST-FLUSH FALLBACK] Committing buffered audio');
-              awaitingResponse = true;
-              inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-              inworld.send(JSON.stringify({ type: 'response.create' }));
-            }
-          }, 800);
+          // Reset speech duration so auto-commit can fire on new speech after flush
+          speechDuration = 0;
         }
 
         console.log('[INWORLD] Ready — waiting for caller audio');
@@ -416,25 +407,21 @@ Final close — strong, upbeat:
         audio: pcmBuf.toString('base64'),
       }));
 
-      // VAD fallback — commit + respond after 800ms of silence
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        if (!inworld || inworld.readyState !== WebSocket.OPEN) return;
-        if (!sessionReady) return;
-        if (!awaitingResponse) {
-          console.log('[VAD FALLBACK] Committing due to silence');
-          awaitingResponse = true;
-          inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-          inworld.send(JSON.stringify({ type: 'response.create' }));
-        }
-      }, 800);
-
-
+      // Auto-commit after 2 seconds of speech — silence timer unreliable on phone streams
+      speechDuration += 20; // each Twilio chunk = 20ms
+      if (speechDuration >= 2000 && !awaitingResponse) {
+        console.log('[AUTO COMMIT] 2s of speech detected — committing buffer');
+        awaitingResponse = true;
+        speechDuration = 0;
+        inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+        inworld.send(JSON.stringify({ type: 'response.create' }));
+      }
     }
 
     if (msg.event === 'stop') {
       console.log('[STOP] Stream stopped:', streamSid);
       audioQueue = [];
+      speechDuration = 0;
       if (silenceTimer) clearTimeout(silenceTimer);
       if (inworld) inworld.close();
     }
@@ -443,6 +430,7 @@ Final close — strong, upbeat:
   browser.on('close', () => {
     console.log('[DISC] Client disconnected');
     audioQueue = [];
+    speechDuration = 0;
     if (silenceTimer) clearTimeout(silenceTimer);
     if (inworld) inworld.close();
   });
