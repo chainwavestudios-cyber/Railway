@@ -82,7 +82,7 @@ const outboundPrompt = `
        "(Wait for an answer)"
        "This isnt fake news created just to uphold a market, or a single stock - this is credible, verified data that shows when the impact is really felt, when that supply shortage really starts to effect solar manufacturing, data center installation and vehicle battery production, what do you honestly think is going to happen",
         "(Wait for an answer)"  "(If no answer in 2-3 seconds continue)"  "(after they answer, continue)"
-      "Ill tell you whats going to happen, its simple, the squeeze becomes real, and this is why the real crunch hasn't even hit yet, and trust me when it happens, you will know. So ${firstname} You aren't late; in fact, you're early. You're getting in before the real floor sets.",
+      "Ill tell you whats going to happen, its simple, the squeeze becomes real, and this is why the real crunch hasn't even hit yet, and trust me when it happens, you will know. So ${firstName} You aren't late; in fact, you're early. You're getting in before the real floor sets.",
       "Look, the real the reason for my call is to secure a 5-minute intro call between you and Chris. He's a 20-year veteran and believes this is a historic setup for an epic first win together- Something he feels is critical to having a last advisor relationship.",
       "Do you have just a few minutes to chat with Chris later today or tomorrow?"
     ]
