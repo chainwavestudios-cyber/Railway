@@ -118,6 +118,7 @@ wss.on('connection', (ws, req) => {
   let streamSid = null;
   let keepAliveInterval = null;
   let mediaCount = 0;
+  let audioQueue = []; // buffer packets that arrive before Inworld is ready
 
   ws.on('message', async (message) => {
     try {
@@ -263,7 +264,7 @@ ALWAYS include day and time_of_day params in book_appointment.`;
           `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`,
           {
             headers: {
-              Authorization: `Basic ${Buffer.from('api-key:' + inworldApiKey).toString('base64')}`
+              Authorization: `Basic ${inworldApiKey}`
             }
           }
         );
@@ -271,11 +272,17 @@ ALWAYS include day and time_of_day params in book_appointment.`;
         inworldWs.on('open', () => {
           console.log('[OK] Connected to Inworld | Lead: ' + leadId);
 
-          keepAliveInterval = setInterval(() => {
-            if (inworldWs.readyState === WebSocket.OPEN) {
-              inworldWs.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: '' }));
+          // Flush any audio that arrived before connection was ready
+          if (audioQueue.length > 0) {
+            console.log('[BUFFER] Flushing', audioQueue.length, 'queued audio packets');
+            for (const pcm24k of audioQueue) {
+              inworldWs.send(JSON.stringify({
+                type: 'input_audio_buffer.append',
+                audio: pcm24k.toString('base64')
+              }));
             }
-          }, 30000);
+            audioQueue = [];
+          }
         });
 
         inworldWs.on('message', async (data) => {
@@ -442,20 +449,15 @@ ALWAYS include day and time_of_day params in book_appointment.`;
           const mulawBuf = Buffer.from(msg.media.payload, 'base64');
           if (mulawBuf.length > 0) {
             const pcm24k = twilioToInworld(mulawBuf);
-            if (mediaCount === 1) {
-              // Log first packet stats to verify audio quality
-              let max = 0;
-              for (let i = 0; i < pcm24k.length; i += 2) {
-                const s = Math.abs(pcm24k.readInt16LE(i));
-                if (s > max) max = s;
-              }
-              console.log('[AUDIO] First packet — mulaw bytes:', mulawBuf.length, '| pcm24k bytes:', pcm24k.length, '| max amplitude:', max);
-            }
             if (mediaCount % 50 === 1) console.log('[MEDIA] Packets sent to Inworld:', mediaCount);
-            inworldWs.send(JSON.stringify({
-              type: 'input_audio_buffer.append',
-              audio: pcm24k.toString('base64')
-            }));
+            if (inworldWs && inworldWs.readyState === WebSocket.OPEN) {
+              inworldWs.send(JSON.stringify({
+                type: 'input_audio_buffer.append',
+                audio: pcm24k.toString('base64')
+              }));
+            } else {
+              audioQueue.push(pcm24k);
+            }
           }
         }
       }
