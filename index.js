@@ -3,6 +3,7 @@ import http from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
 import url from 'url';
 import fetch from 'node-fetch';
+import { randomUUID } from 'crypto';
 
 const app = express();
 const server = http.createServer(app);
@@ -199,10 +200,14 @@ Final close — strong, upbeat:
       console.error('[INWORLD] INWORLD_API_KEY not set');
       return;
     }
-    const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=${apiKey}&protocol=realtime`;
+    // Session ID is a unique UUID per call; auth header encodes 'api-key:<key>' in base64
+    const sessionId = randomUUID();
+    const authHeader = Buffer.from('api-key:' + apiKey).toString('base64');
+    const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`;
+    console.log('[INWORLD] Connecting | session: ' + sessionId);
 
     inworldWs = new WebSocket(wsUrl, {
-      headers: { 'Authorization': `Basic ${apiKey}` }
+      headers: { 'Authorization': `Basic ${authHeader}` }
     });
 
     inworldWs.on('open', () => {
@@ -293,17 +298,7 @@ Final close — strong, upbeat:
           audioQueue = [];
         }
 
-        // Text ping
-        console.log('[TEST] Sending text ping to verify LLM pipeline...');
-        inworldWs.send(JSON.stringify({
-          type: 'conversation.item.create',
-          item: {
-            type: 'message',
-            role: 'user',
-            content: [{ type: 'input_text', text: 'Say the word "hello" and nothing else.' }]
-          }
-        }));
-        inworldWs.send(JSON.stringify({ type: 'response.create' }));
+        console.log('[INWORLD] Ready — waiting for caller audio');
       }
 
       // Transcript logging
