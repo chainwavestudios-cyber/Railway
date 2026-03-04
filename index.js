@@ -365,6 +365,16 @@ ALWAYS include day and time_of_day params in book_appointment.`;
               }));
             }
 
+            // Test: on session.updated, send a text ping to verify LLM pipeline works
+            if (event.type === 'session.updated') {
+              console.log('[TEST] Sending text ping to verify LLM pipeline...');
+              inworldWs.send(JSON.stringify({
+                type: 'conversation.item.create',
+                item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Say the word "hello" and nothing else.' }] }
+              }));
+              inworldWs.send(JSON.stringify({ type: 'response.create' }));
+            }
+
             // Log conversation text
             if (event.type === 'response.output_text.delta') {
               process.stdout.write(event.delta || '');
