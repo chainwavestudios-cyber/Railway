@@ -210,12 +210,11 @@ Final close — strong, upbeat:
   // ── Connect to Inworld Realtime API ─────────────────────────────────────
   function connectInworld() {
     const apiKey    = process.env.INWORLD_API_KEY;
-    const apiSecret = process.env.INWORLD_API_SECRET;
-    if (!apiKey || !apiSecret) {
-      console.error('[INWORLD] INWORLD_API_KEY or INWORLD_API_SECRET not set');
+    if (!apiKey) {
+      console.error('[INWORLD] INWORLD_API_KEY not set');
       return;
     }
-    const authHeader = `Basic ${Buffer.from(`${apiKey}:${apiSecret}`).toString('base64')}`;
+    const authHeader = `Basic ${apiKey}`;
     const sessionId = randomUUID();
     const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`;
     console.log('[INWORLD] Connecting | session: ' + sessionId);
