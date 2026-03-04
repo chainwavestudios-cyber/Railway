@@ -8,6 +8,9 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:', err));
+process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
+
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
 wss.on('connection', (ws, req) => {
@@ -44,10 +47,10 @@ wss.on('connection', (ws, req) => {
             }
           }, 5000);
 
-          const outboundPrompt = `
+const outboundPrompt = `
 {
   "agent_identity": {
-    "name": "Orion",
+    "name": "R2D2",
     "role": "Outbound SDR",
     "company": "Corventa Metals",
     "representing": "Chris, Senior Strategy Advisor",
@@ -61,9 +64,9 @@ wss.on('connection', (ws, req) => {
   "script_flow": {
     "opening": [
       "(Wait for prospect to speak)",
-      "Hello, may I speak with {{firstName}} please?",
+      "Hello, may I speak with ${firstName} please?",
       "(Wait for answer)",
-      "Ok great, {{firstName}}, I hope I'm not taking you away from anything too important?"
+      "Ok great, ${firstName}, I hope I'm not taking you away from anything too important?"
     ],
     "logic_branch": {
       "if_busy": "No problem at all. Have a great day",
@@ -75,17 +78,17 @@ wss.on('connection', (ws, req) => {
       "I think the most common theme we are hearing from investors who dont really understand the state of the supply/demand squeeze, is that silver had its run.   The truth is, we're likely consolidating to a new floor right now.",
       "This setup reminds me of Nvidia in 2024—after its huge run, everyone expected a correction, but it moved another 68% because of pure fundamentals. Silver is in that exact same spot.",
       "With silver, you're in a stable asset backed by a six-year supply deficit from Electric Vehicles, solar, and AI data centers. The demand will continue to exponentially rise.",
-       "{{firstName}} are you familair with the incredible new demand of silver from our High Tech industries?",
+       "${firstName} are you familair with the incredible new demand of silver from our High Tech industries?",
        "(Wait for an answer)"
        "This isnt fake news created just to uphold a market, or a single stock - this is credible, verified data that shows when the impact is really felt, when that supply shortage really starts to effect solar manufacturing, data center installation and vehicle battery production, what do you honestly think is going to happen",
         "(Wait for an answer)"  "(If no answer in 2-3 seconds continue)"  "(after they answer, continue)"
       "Ill tell you whats going to happen, its simple, the squeeze becomes real, and this is why the real crunch hasn't even hit yet, and trust me when it happens, you will know. So ${firstname} You aren't late; in fact, you're early. You're getting in before the real floor sets.",
-      "Look, the real the reason for my call is to secure a 5-minute intro call between you and Chris. He’s a 20-year veteran and believes this is a historic setup for an epic first win together- Something he feels is critical to having a last advisor relationship.",
+      "Look, the real the reason for my call is to secure a 5-minute intro call between you and Chris. He's a 20-year veteran and believes this is a historic setup for an epic first win together- Something he feels is critical to having a last advisor relationship.",
       "Do you have just a few minutes to chat with Chris later today or tomorrow?"
     ]
   },
   "objections": {
-    "too_late or Silver to High Alreawdy": "I get that concern—but think about Bitcoin at 10k. It felt late, but it was a gift. Silver is there now, backed by industrial demand from AI and Green Tech. You're getting in before the floor resets. Do you have a few minutes for Chris?",
+    "too_late or Silver to High Alreawdy": "${firstname} we get that concern, we totally do... I want you to for just a second,  think about Bitcoin when it was at 10k. It felt late, but it wasnt, and we all know what happened. Silver now is bitcoin at 10k.  The need and practical use for silver is exploding, and silver is a bi-product of mining other hard to get metals, like copper.  There is a button to press to just ramp up production.  Right now, Silver demand is being thrusted by industrial use, AI Data CEnter, Solar Panel Manufacturing, and electric car batteries, litterally the cornerstones of advanced society. Any accumulation today, means you getting in on the new floor, before the explosive growth. Do you have a few minutes for Chris later today or tomorrow?",
     "the_play or Chris's Strategy": "Chris recommends an 8-week dollar-cost averaging strategy before the supply squeeze hits. Even Rick Harrison from Pawn Stars said he can't keep an ounce of silver in his shop. Do mornings or afternoons work better for you?",
     "not_interested": "No problem at all. I appreciate your time—have a great day."
   }
@@ -137,7 +140,13 @@ wss.on('connection', (ws, req) => {
               think: {
                 provider: {
                   type: 'open_ai',
-                  model: 'gpt-4.1-nano'
+                  model: 'google/gemini-2.5-flash'
+                },
+                endpoint: {
+                  url: 'https://api.inworld.ai/v1',
+                  headers: {
+                    'Authorization': 'Basic ' + (process.env.INWORLD_API_KEY || 'elk5bXpPZW41RTdPamRHNVZWYWNHcGNPc3piV3RYMmQ6VGZydGs4VWdTc1JVV2pBYnB6dElZOEJkSnhDRXJxb2t5ajlPbEVhY0RudXZlVUtrdHhVdlA0VUJkYUw1c281Mg==')
+                  }
                 },
                 prompt: prompt,
                 functions: [
@@ -182,18 +191,16 @@ wss.on('connection', (ws, req) => {
               },
               speak: {
                 provider: {
-                  type: 'cartesia',
-                  model_id: 'sonic-2',
+                  type: 'inworld',
+                  model_id: 'inworld-tts-1.5-max',
                   voice: {
-                    mode: 'id',
-                    id: '86e30c1d-714b-4074-a1f2-1cb6b552fb49'
-                  },
-                  language: 'en'
+                    id: 'default-zrwumrrhegpobn7fjiz5mq__chris'
+                  }
                 },
                 endpoint: {
-                  url: 'https://api.cartesia.ai/tts/bytes',
+                  url: 'wss://api.inworld.ai/tts/v1/voice/websocket',
                   headers: {
-                    'x-api-key': process.env.CARTESIA_API_KEY || 'sk_car_rKBM7SnrM1aLwSBpfwjj5w'
+                    'Authorization': 'Basic ' + (process.env.INWORLD_API_KEY || 'elk5bXpPZW41RTdPamRHNVZWYWNHcGNPc3piV3RYMmQ6VGZydGs4VWdTc1JVV2pBYnB6dElZOEJkSnhDRXJxb2t5ajlPbEVhY0RudXZlVUtrdHhVdlA0VUJkYUw1c281Mg==')
                   }
                 }
               }
