@@ -1,22 +1,17 @@
 import express from 'express';
 import http from 'http';
-import { WebSocket, WebSocketServer } from 'ws';
-import url from 'url';
+import WebSocket, { WebSocketServer } from 'ws';
 import fetch from 'node-fetch';
 
+const PORT = process.env.PORT || 8080;
+
 const app = express();
+app.get('/health', (_, res) => res.send('OK'));
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:', err));
-process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
-
-app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
-
-// ─── Auth diagnostic ──────────────────────────────────────────────────────────
-if (!_diagKey) {
-} else {
-}
+console.log('[START] Orion Engine Running on Port', PORT);
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -69,45 +64,44 @@ function pcm16_24kToMulaw(pcmBuf) {
   return out;
 }
 
-wss.on('connection', (ws, req) => {
-  const params     = url.parse(req.url, true).query;
-  const firstName  = params.f || 'Philip';
-  const leadId     = params.l || 'unknown';
-  const campaignId = params.c || 'unknown';
-  const email      = params.e || '';
-
-  let inworldWs    = null;
-  let streamSid    = null;
-  let keepAlive    = null;
-  let audioQueue   = [];
-  let inworldReady = false;
-  let mediaCount   = 0;
+wss.on('connection', (browser) => {
+  let streamSid = null;
+  let inworld = null;
+  let sessionReady = false;
+  let reconnectAttempts = 0;
   let silenceTimer = null;
-  let hasAudio     = false;
+  let awaitingResponse = false;
+  let leadId = 'unknown';
+  let campaignId = 'unknown';
+  let email = '';
+  let callerFirstName = 'friend';
 
-  function scheduleCommit() {
-    if (silenceTimer) clearTimeout(silenceTimer);
-    silenceTimer = setTimeout(() => {
-      if (!inworldWs || inworldWs.readyState !== WebSocket.OPEN || !hasAudio) {
-        console.log('[VAD] Silence timer fired but skipping — hasAudio: ' + hasAudio + ' wsState: ' + (inworldWs?.readyState));
-        return;
+  const MAX_RECONNECTS = 3;
+
+  function connectInworld(firstName = 'friend') {
+    console.log('[INWORLD] Connecting | session:', streamSid);
+
+    const key = 'YWF2QmVkNTE2ZzlTamFpUERHaHBna3pIa09yY0VEazI6aElUZkhQM0x0aWE3ZDFMcmpKdzdndVJKZ3lLQTlPYzZyNVY5ZzRMcTUxOU9Zbm5ydmh2T2FVMFpodkpuTFBlcw==';
+
+    console.log('[AUTH DEBUG]', {
+      length: key.length,
+      first8: key.slice(0, 8),
+      last8: key.slice(-8),
+    });
+
+    inworld = new WebSocket(
+      `wss://api.inworld.ai/api/v1/realtime/session?key=voice-${Date.now()}&protocol=realtime`,
+      { headers: { Authorization: `Basic ${key}` } }
+    );
+
+    const sessionTimeout = setTimeout(() => {
+      if (!sessionReady) {
+        console.log('[TIMEOUT] session.created never received');
+        inworld.close();
       }
-      console.log('[VAD] Committing audio + firing response.create');
-      hasAudio = false;
-      inworldWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-      inworldWs.send(JSON.stringify({ type: 'response.create' }));
-    }, 800);
-  }
+    }, 10000);
 
-  function isSilent(mulawBuf) {
-    let count = 0;
-    for (let i = 0; i < mulawBuf.length; i++) {
-      if (mulawBuf[i] === 0x7F || mulawBuf[i] === 0xFF) count++;
-    }
-    return count / mulawBuf.length > 0.95;
-  }
-
-  const prompt = `Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
+    const prompt = `Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
 
 Vocal Style:
 Tone: Calm, confident, assertive, upbeat, and enthusiastic.
@@ -118,7 +112,7 @@ Adherence: You are an actor. Recite the PHASES exactly as written.
 
 Core Rules:
 Silence Start: NEVER speak first. Wait for the prospect to say something.
-The Hook: The instant the prospect speaks, your ONLY response is: "Hello, may I speak with " + firstName + "?"
+The Hook: The instant the prospect speaks, your ONLY response is: "Hello, may I speak with ${firstName}?"
 Flow Control: DO NOT pause after statements. Do NOT wait for the other person to speak unless explicitly told to (Stop. Wait.) or (Wait).
 Momentum: Deliver one sentence and immediately continue to the next without conversational gaps.
 Energy: Sound sincere, excited, and certain. Use confident voice inflections.
@@ -214,45 +208,27 @@ Final close — strong, upbeat:
 
 (Call book_appointment with day, time_of_day, and notes from qualifier answers.)`;
 
-  function connectInworld() {
-    const apiKey = 'YWF2QmVkNTE2ZzlTamFpUERHaHBna3pIa09yY0VEazI6aElUZkhQM0x0aWE3ZDFMcmpKdzdndVJKZ3lLQTlPYzZyNVY5ZzRMcTUxOU9Zbm5ydmh2T2FVMFpodkpuTFBlcw==';
-
-    console.log('[AUTH DEBUG]', {
-      length: apiKey.length,
-      first8: apiKey.substring(0, 8),
-      last8: apiKey.substring(apiKey.length - 8)
+    inworld.on('open', () => {
+      console.log('[INWORLD] WebSocket open — waiting for session.created');
     });
 
-    // Hard coded session key — DO NOT re-encode the API key
-    const wsUrl = 'wss://api.inworld.ai/api/v1/realtime/session?key=test&protocol=realtime';
-
-    inworldWs = new WebSocket(wsUrl, {
-      headers: { Authorization: `Basic ${apiKey}` }
-    });
-
-    inworldWs.on('open', () => {
-      console.log('[INWORLD] WebSocket open');
-
-      keepAlive = setInterval(() => {
-        if (inworldWs && inworldWs.readyState === WebSocket.OPEN) {
-          inworldWs.send(JSON.stringify({ type: 'ping' }));
-        }
-      }, 15000);
-    });
-
-    inworldWs.on('message', async (data) => {
+    inworld.on('message', async (data) => {
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }
 
-      console.log('[INWORLD RAW]', JSON.stringify(msg).substring(0, 800));
+      console.log('[INWORLD RAW]', msg.type);
 
       if (msg.type === 'session.created') {
+        clearTimeout(sessionTimeout);
+        sessionReady = true;
+        reconnectAttempts = 0;
         console.log('[INWORLD] Session created — sending config');
-        inworldWs.send(JSON.stringify({
+
+        inworld.send(JSON.stringify({
           type: 'session.update',
           session: {
             type: 'realtime',
-            modelId: 'auto',
+            model: 'auto',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
             audio: {
@@ -262,15 +238,15 @@ Final close — strong, upbeat:
                   type: 'semantic_vad',
                   eagerness: 'high',
                   create_response: true,
-                  interrupt_response: true
-                }
+                  interrupt_response: true,
+                },
               },
               output: {
                 format: { type: 'audio/pcm', rate: 24000 },
                 voice: 'Dennis',
                 model: 'inworld-tts-1.5-mini',
-                speed: 1.0
-              }
+                speed: 1.0,
+              },
             },
             tools: [
               {
@@ -282,10 +258,10 @@ Final close — strong, upbeat:
                   properties: {
                     day: { type: 'string', description: 'Day they agreed to e.g. today, tomorrow, Monday' },
                     time_of_day: { type: 'string', enum: ['AM', 'PM'] },
-                    notes: { type: 'string', description: 'Qualifier answers: prior metals, liquidity, retirement interest' }
+                    notes: { type: 'string', description: 'Qualifier answers: prior metals, liquidity, retirement interest' },
                   },
-                  required: ['day', 'time_of_day']
-                }
+                  required: ['day', 'time_of_day'],
+                },
               },
               {
                 type: 'function',
@@ -294,54 +270,45 @@ Final close — strong, upbeat:
                 parameters: {
                   type: 'object',
                   properties: {
-                    confirmed: { type: 'boolean' }
+                    confirmed: { type: 'boolean' },
                   },
-                  required: ['confirmed']
-                }
-              }
-            ]
-          }
+                  required: ['confirmed'],
+                },
+              },
+            ],
+            temperature: 0.8,
+          },
         }));
       }
 
       if (msg.type === 'session.updated') {
         const vad = msg.session?.audio?.input?.turn_detection?.type || 'unknown';
         const voice = msg.session?.audio?.output?.voice || 'unknown';
-        const instructions_len = msg.session?.instructions?.length || 0;
-        console.log(`[INWORLD] Session updated | VAD: ${vad} | Voice: ${voice} | Instructions: ${instructions_len} chars`);
-        inworldReady = true;
-
-        if (audioQueue.length > 0) {
-          console.log(`[QUEUE] Flushing ${audioQueue.length} buffered packets`);
-          for (const pcmBuf of audioQueue) {
-            if (inworldWs.readyState === WebSocket.OPEN) {
-              inworldWs.send(JSON.stringify({
-                type: 'input_audio_buffer.append',
-                audio: pcmBuf.toString('base64')
-              }));
-            }
-          }
-          audioQueue = [];
-        }
-
+        console.log(`[INWORLD] Session updated | VAD: ${vad} | Voice: ${voice}`);
         console.log('[INWORLD] Ready — waiting for caller audio');
       }
 
       if (msg.type === 'conversation.item.added' && msg.item?.content) {
-        console.log('[CHAT] ' + msg.item.role + ': ' + JSON.stringify(msg.item.content));
+        console.log('[CHAT]', msg.item.role + ':', JSON.stringify(msg.item.content));
       }
 
       // ─── AUDIO: PCM16 24kHz → mulaw 8kHz → Twilio ───────────────────────
       if (msg.type === 'response.output_audio.delta' && msg.delta) {
-        if (ws.readyState === WebSocket.OPEN && streamSid) {
+        awaitingResponse = true;
+        if (browser.readyState === WebSocket.OPEN && streamSid) {
           try {
-            const pcmBuf   = Buffer.from(msg.delta, 'base64');
+            const pcmBuf = Buffer.from(msg.delta, 'base64');
             const mulawBuf = pcm16_24kToMulaw(pcmBuf);
-            ws.send(JSON.stringify({
-              event: 'media',
-              streamSid,
-              media: { payload: mulawBuf.toString('base64') }
-            }));
+            console.log('[AUDIO OUT] mulaw chunk size:', mulawBuf.length);
+            // Send in 160-byte chunks (8kHz * 20ms = 160 bytes = 1 Twilio frame)
+            for (let i = 0; i < mulawBuf.length; i += 160) {
+              const chunk = mulawBuf.slice(i, i + 160);
+              browser.send(JSON.stringify({
+                event: 'media',
+                streamSid,
+                media: { payload: chunk.toString('base64') },
+              }));
+            }
           } catch (e) {
             console.error('[AUDIO] Conversion error:', e.message);
           }
@@ -349,92 +316,112 @@ Final close — strong, upbeat:
       }
 
       if (msg.type === 'response.output_audio_transcript.done') {
-        console.log('[TRANSCRIPT] ' + msg.transcript);
+        console.log('[TRANSCRIPT]', msg.transcript);
       }
 
       if (msg.type === 'response.function_call_arguments.done') {
         const fnName = msg.name;
         let fnArgs = {};
         try { fnArgs = JSON.parse(msg.arguments || '{}'); } catch (e) {}
-        console.log('[TOOL] ' + fnName + ' | ' + JSON.stringify(fnArgs));
+        console.log('[TOOL]', fnName, '|', JSON.stringify(fnArgs));
 
         fetch('https://agentbman2.base44.app/api/functions/postCallSync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tool: fnName, lead_id: leadId, campaign_id: campaignId, params: fnArgs, email })
+          body: JSON.stringify({ tool: fnName, lead_id: leadId, campaign_id: campaignId, params: fnArgs, email }),
         }).catch(e => console.error('Sync Error:', e));
 
-        if (inworldWs.readyState === WebSocket.OPEN) {
-          inworldWs.send(JSON.stringify({
+        if (inworld.readyState === WebSocket.OPEN) {
+          inworld.send(JSON.stringify({
             type: 'conversation.item.create',
-            item: { type: 'function_call_output', call_id: msg.call_id, output: JSON.stringify({ status: 'success' }) }
+            item: { type: 'function_call_output', call_id: msg.call_id, output: JSON.stringify({ status: 'success' }) },
           }));
-          inworldWs.send(JSON.stringify({ type: 'response.create' }));
+          inworld.send(JSON.stringify({ type: 'response.create' }));
         }
       }
 
-      if (msg.type === 'response.done') console.log('[DONE] Response complete');
+      if (msg.type === 'response.done') { awaitingResponse = false; console.log('[DONE] Response complete'); }
       if (msg.type === 'error') console.error('[INWORLD ERROR]', JSON.stringify(msg));
     });
 
-    inworldWs.on('error', (err) => console.error('[INWORLD] WS Error:', err.message));
-    inworldWs.on('close', (code, reason) => {
-      console.warn('[INWORLD] Closed:', code, reason?.toString());
-      if (keepAlive) clearInterval(keepAlive);
+    inworld.on('close', (code) => {
+      console.log('[INWORLD] Closed (' + code + ')');
+      sessionReady = false;
+      if (reconnectAttempts < MAX_RECONNECTS) {
+        reconnectAttempts++;
+        console.log('[RECONNECT] Attempt', reconnectAttempts);
+        setTimeout(() => connectInworld(callerFirstName), 1000);
+      }
+    });
+
+    inworld.on('error', (err) => {
+      console.error('[INWORLD] WS Error:', err.message);
     });
   }
 
-  // ── Twilio media stream messages ──────────────────────────────────────────
-  ws.on('message', async (message) => {
-    try {
-      const msg = JSON.parse(message);
+  browser.on('message', (message) => {
+    let msg;
+    try { msg = JSON.parse(message.toString()); } catch { return; }
 
-      if (msg.event === 'start') {
-        streamSid = msg.start.streamSid;
-        console.log('[START] Stream: ' + streamSid + ' | Lead: ' + leadId);
-        connectInworld();
-      }
+    if (msg.event === 'start') {
+      streamSid = msg.start.streamSid;
+      leadId = msg.start.customParameters?.l || 'unknown';
+      campaignId = msg.start.customParameters?.c || 'unknown';
+      email = msg.start.customParameters?.e || '';
+      callerFirstName = msg.start.customParameters?.f || msg.start.customParameters?.firstName || 'friend';
+      console.log('[START] Stream:', streamSid, '| Lead:', leadId, '| Name:', callerFirstName);
+      connectInworld(callerFirstName);
+    }
 
-      if (msg.event === 'media') {
-        const mulawBuf = Buffer.from(msg.media.payload, 'base64');
-        if (mulawBuf.length === 0) return;
+    if (msg.event === 'media') {
+      if (!sessionReady || !inworld || inworld.readyState !== WebSocket.OPEN) return;
 
-        const pcmBuf = mulawToPcm16_24k(mulawBuf);
-        mediaCount++;
-        if (mediaCount % 50 === 0) console.log('[MEDIA] Packets sent to Inworld: ' + mediaCount);
+      const mulawBuf = Buffer.from(msg.media.payload, 'base64');
+      const pcmBuf = mulawToPcm16_24k(mulawBuf);
 
-        if (!inworldReady || !inworldWs || inworldWs.readyState !== WebSocket.OPEN) {
-          audioQueue.push(pcmBuf);
-        } else {
-          if (!isSilent(mulawBuf)) {
-            if (!hasAudio) console.log('[VAD] Speech detected');
-            hasAudio = true;
-          }
-          inworldWs.send(JSON.stringify({
-            type: 'input_audio_buffer.append',
-            audio: pcmBuf.toString('base64')
-          }));
-          scheduleCommit();
+      inworld.send(JSON.stringify({
+        type: 'input_audio_buffer.append',
+        audio: pcmBuf.toString('base64'),
+      }));
+
+      // VAD fallback — commit + respond after 800ms of silence
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (!inworld || inworld.readyState !== WebSocket.OPEN) return;
+        if (!sessionReady) return;
+        if (!awaitingResponse) {
+          console.log('[VAD FALLBACK] Committing due to silence');
+          awaitingResponse = true;
+          inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+          inworld.send(JSON.stringify({ type: 'response.create' }));
         }
-      }
+      }, 800);
 
-      if (msg.event === 'stop') {
-        console.log('[STOP] Stream stopped: ' + streamSid);
-        if (silenceTimer) clearTimeout(silenceTimer);
-        if (keepAlive) clearInterval(keepAlive);
-        if (inworldWs) inworldWs.close(1000, 'Call ended');
+      // TEMPORARY FORCE COMMIT — remove after confirming VAD works
+      if (!browser._forceCommitInterval) {
+        browser._forceCommitInterval = setInterval(() => {
+          if (!sessionReady || !inworld || inworld.readyState !== WebSocket.OPEN) return;
+          console.log('[FORCE COMMIT] Forcing commit + response.create');
+          inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+          inworld.send(JSON.stringify({ type: 'response.create' }));
+        }, 1500);
       }
-    } catch (err) {
-      console.error('[WS] Error:', err);
+    }
+
+    if (msg.event === 'stop') {
+      console.log('[STOP] Stream stopped:', streamSid);
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (browser._forceCommitInterval) clearInterval(browser._forceCommitInterval);
+      if (inworld) inworld.close();
     }
   });
 
-  ws.on('close', () => {
+  browser.on('close', () => {
     console.log('[DISC] Client disconnected');
-    if (keepAlive) clearInterval(keepAlive);
-    if (inworldWs) inworldWs.close(1000, 'Client disconnected');
+    if (silenceTimer) clearTimeout(silenceTimer);
+    if (browser._forceCommitInterval) clearInterval(browser._forceCommitInterval);
+    if (inworld) inworld.close();
   });
 });
 
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, '0.0.0.0', () => console.log('[START] Orion Engine Running on Port ' + PORT));
+server.listen(PORT);
