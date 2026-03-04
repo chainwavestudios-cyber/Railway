@@ -97,7 +97,16 @@ wss.on('connection', (ws, req) => {
       hasAudio = false;
       inworldWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
       inworldWs.send(JSON.stringify({ type: 'response.create' }));
-    }, 600); // 600ms silence = end of turn
+    }, 800); // 800ms — Twilio sends ~50 packets/sec so this is ~40 packets of silence
+  }
+
+  // Detect silence by checking if mulaw payload is near-silent (all ~0x7F = mulaw silence)
+  function isSilent(mulawBuf) {
+    let count = 0;
+    for (let i = 0; i < mulawBuf.length; i++) {
+      if (mulawBuf[i] === 0x7F || mulawBuf[i] === 0xFF) count++;
+    }
+    return count / mulawBuf.length > 0.95; // 95% silence bytes = silent frame
   }
 
   const prompt = `Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
@@ -403,7 +412,8 @@ Final close — strong, upbeat:
         if (!inworldReady || !inworldWs || inworldWs.readyState !== WebSocket.OPEN) {
           audioQueue.push(pcmBuf);
         } else {
-          hasAudio = true;
+          // Only mark hasAudio and schedule commit if this frame has actual speech
+          if (!isSilent(mulawBuf)) hasAudio = true;
           inworldWs.send(JSON.stringify({
             type: 'input_audio_buffer.append',
             audio: pcmBuf.toString('base64')
