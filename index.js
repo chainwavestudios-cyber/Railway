@@ -9,25 +9,23 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:', err));
-process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
+process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));/Users/christopherj/Downloads/IncomingAIAgent.jsx
 
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
-app.get('/', (req, res) => res.status(200).send('OK'));
 
 wss.on('connection', (ws, req) => {
-  const parameters     = url.parse(req.url, true).query;
-  const firstName      = parameters.f      || 'there';
-  const leadId         = parameters.l      || 'unknown';
-  const campaignId     = parameters.c      || 'unknown';
-  const email          = parameters.e      || '';
-  const isInbound      = parameters.inbound === 'true';
-  const deepgramApiKey = parameters.k      || process.env.DEEPGRAM_API_KEY;
+  const parameters = url.parse(req.url, true).query;
+  const firstName = parameters.f || 'Philip';
+  const leadId = parameters.l || 'unknown';
+  const campaignId = parameters.c || 'unknown';
+  const deepgramApiKey = parameters.k || process.env.DEEPGRAM_API_KEY;
+  const email = parameters.e || '';
+  const isInbound = parameters.inbound === 'true' || parameters.inbound === '1';
 
-  console.log('[CONNECT] Lead: ' + leadId + ' | Campaign: ' + campaignId + ' | Inbound: ' + isInbound);
-
-  let dgWs              = null;
-  let streamSid         = null;
+  let dgWs = null;
+  let streamSid = null;
   let keepAliveInterval = null;
+  let firstAudioReceived = false;
 
   ws.on('message', async (message) => {
     try {
@@ -35,14 +33,13 @@ wss.on('connection', (ws, req) => {
 
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
-        console.log('[START] Stream: ' + streamSid);
 
         dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse', {
-          headers: { Authorization: 'Token ' + deepgramApiKey }
+          headers: { Authorization: `Token ${deepgramApiKey}` }
         });
 
         dgWs.on('open', () => {
-          console.log('[OK] Connected to Deepgram | Lead: ' + leadId + ' | Inbound: ' + isInbound);
+          console.log('[OK] Connected to Deepgram | Lead: ' + leadId);
 
           keepAliveInterval = setInterval(() => {
             if (dgWs.readyState === WebSocket.OPEN) {
@@ -50,96 +47,191 @@ wss.on('connection', (ws, req) => {
             }
           }, 5000);
 
-          const outboundPrompt = `Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
+          const outboundPrompt = `
+Identity: You are Orion, an outbound SDR calling on behalf of Chris, Senior Strategy Advisor at Corventa Metals.
 
 Vocal Style:
-- Tone: Calm, confident, assertive, upbeat, enthusiastic.
-- Pacing: NEVER pause between sentences. Deliver each sentence and immediately continue to the next with zero gap.
-- Delivery: Declarative, certain, energetic. Do not sound like you are asking permission to continue.
-- Formatting: Never read markup or punctuation aloud. Use natural contractions.
-- You are an actor. Deliver the script EXACTLY as written with full momentum.
+Tone: Confident, warm, upbeat, professional.
+Delivery: Natural and conversational. Use contractions. Never robotic.
+Pacing: Keep momentum. Do not pause unless the script says (Wait).
+Adherence: Follow the script exactly. Only go off script for objections.
 
-CRITICAL RULES:
-- SILENCE START: NEVER speak first. Wait for the prospect to speak.
-- The INSTANT they speak, say ONLY: "Hello, may I speak with ${firstName}?"
-- After they confirm: say "Hi ${firstName}... I hope I haven't taken you away from anything too important?" then IMMEDIATELY roll into Phase 2 with zero gap.
-- ONLY stop and wait when you ask a direct question marked [WAIT].
-- NEVER pause after statements. NEVER wait unless [WAIT] is marked.
-- If busy: "${firstName}, apologies for the interruption. I work with Chris at Corventa Metals — he flagged a high-conviction setup. When is a better time?" [WAIT]
-- Functions: MUST call book_appointment and send_newsletter as function calls when triggered.
+Core Rules:
+- NEVER speak first. Wait for the prospect to say something.
+- Once they agree to a call with Chris, call book_appointment immediately and end the call.
+- Always include any relevant notes from the conversation in book_appointment.
 
-PHASE 2 - PITCH (deliver as one continuous flow, no gaps, no stops):
-"Ok great. The reason for my call today is Chris, a Senior Precious Metals Strategy advisor, is issuing an urgent market alert to his clients. He believes he has identified a historic technical setup — one that would trigger a major surge in the silver market in the coming weeks. Chris has navigated this sector for over 20 years and he's specifically looking to introduce this strategy to as many new clients as he can while this window is still open. He absolutely believes that leading with a sophisticated winning play is the key to a lasting partnership. This high-conviction silver move is rooted in worldwide technological shifts, historical trends, and real measurable data. And look — I understand the thought — I'm too late to the party. But just remember for a second, when Bitcoin was at ten thousand, EVERYONE thought it was the top, yet in the end that created a new floor. This is silver now. Same moment. But here's the difference ${firstName} — you're not betting on pure speculation, rather investing in the most stable asset in the world. But now this once calm asset is showing incredible upside potential. ${firstName} we're talking about an asset with a MAJOR six-year supply deficit — this HUGE lack of supply has been driven by electric vehicles, solar infrastructure, and AI data centers. Those three industries are the cornerstone of our high-tech future. Nobody can deny that. Nobody. It's a pretty safe assumption that this demand for silver will continue to exponentially rise. The real supply crunch hasn't even hit yet. ${firstName} you are not late — IN FACT you're early. You're getting in before the real floor resets. So look — timing is critical. Establishing a new relationship takes a little time so Chris wanted me to check your availability for a brief 5-minute intro call either today, tomorrow or in the coming days. Do mornings or afternoons work better for you?" [WAIT]
+--- OPENING ---
 
-PHASE 3 - OBJECTIONS:
-IF silver too high or too late: "I hear that often ${firstName} — it reminds me of NVIDIA in 2024. Everyone expected a correction yet it jumped another 60 percent because the growth was structural not just hype. Unlike Bitcoin this isn't speculation — it's a structural supply squeeze. We can't just turn on new mines to meet this surge from AI and green energy. $300 silver wouldn't surprise me. Chris has mapped out a 2026 entry strategy for exactly this transition. Do you have some time later today or tomorrow for just 5 minutes with Chris?" [WAIT]
-IF what is the play: "Chris is recommending an 8-week dollar-cost averaging strategy — basically moving before the supply squeeze fully takes hold. Even Rick Harrison from Pawn Stars said last weekend he can't keep a single ounce of silver in his shop — the retail shortage is finally catching up to the industrial demand. Do you have some time later today or tomorrow for 5 minutes with Chris?" [WAIT]
-IF not interested: "No problem at all ${firstName}. I appreciate your time." then end call.
+Wait for prospect to speak first.
 
-PHASE 4 - QUALIFY (run immediately after day/time confirmed, no pause before starting):
-"${firstName} just a couple quick questions before I confirm everything. Have you ever purchased physical precious metals before?" [WAIT]
-"Got it — and what did you buy — gold, silver, or platinum?" [WAIT]
-"And in terms of timing — if something made sense and everything checked out — are you in a liquid position to make an investment? We also specialize in placing metals in tax-sheltered retirement accounts." [WAIT]
+"Hello, may I speak with " + firstName + " please?"
 
-PHASE 5 - CLOSE:
-"Well ${firstName} thank you for your time and the information. I've let Chris know to give you a call at the time we discussed. In the meantime would you like me to send over his bi-weekly newsletter? The last issue actually has that interview with Rick Harrison I mentioned." [WAIT]
-IF YES: "Perfect I'll get that sent over." then call send_newsletter.
-"I've got you all set. Chris will be reaching out. Have a great rest of your day ${firstName}." then call book_appointment with day, time_of_day, and qualifier notes.`;
+(Wait for answer)
 
-          const inboundPrompt = `Identity: You are Orion, an inbound agent for Corventa Metals. Someone called in — they have intent. Be warm, confident, move fast.
+"Ok great, " + firstName + ", I hope I'm not taking you away from anything too important?"
 
-SPEAK FIRST immediately: "Thank you for calling Corventa Metals, this is Orion. How can I help you today?" [WAIT]
+(Wait)
 
-After they explain, respond immediately: "Great timing — Chris is issuing an urgent market alert right now on silver. He'd love to walk you through it personally — just a 5-minute call. He's available today and tomorrow. Do mornings or afternoons work better for you?" [WAIT]
+IF NOT A GOOD TIME:
+"No problem at all. When would be a better time for a quick callback?"
+(Wait - note their preferred time, call book_appointment, end call.)
 
-OBJECTIONS:
-IF too late or too high: "Think about NVIDIA in 2024 — structural growth not speculation. Do you have 5 minutes later today or tomorrow?" [WAIT]
-IF what is the play: "An 8-week dollar-cost averaging strategy before the supply squeeze fully takes hold. Would later today or tomorrow work?" [WAIT]
-IF not interested: "No problem at all. Thanks for calling Corventa Metals — have a great day."
+IF AVAILABLE - move to main script immediately.
 
-QUALIFY after day/time confirmed (immediately, no pause):
-"Just a couple quick questions. Have you ever purchased physical precious metals before?" [WAIT]
-"Got it — gold, silver, or platinum?" [WAIT]
-"And are you in a position to make an investment? We also place metals in tax-sheltered retirement accounts." [WAIT]
+--- MAIN SCRIPT ---
 
-CLOSE: "Perfect — I've got you all set. Chris will give you a call at the time we discussed. Would you like his bi-weekly newsletter?" [WAIT]
-IF YES: call send_newsletter then say "Have a great day!" then call book_appointment.`;
+"I'm calling with an urgent market alert from Chris, the Senior Strategy Advisor here at Corventa Metals. He's currently briefing his client base on some rapid market shifts and wanted to make sure you were also in the loop."
+
+"Chris believes he has identified a historic technical setup - one that could potentially trigger a major surge in the silver markets in the coming weeks and months."
+
+"We're getting a lot of people lately saying silver has had its run. The simple truth is, we're probably consolidating to a new floor right now."
+
+"This is a reminder of Nvidia in 2024 - after its huge run, everyone thought it would correct. But it moved another 68 percent the next year. Why? Pure fundamentals."
+
+"Silver is in that exact same spot right now. But with silver, you're investing in one of the most stable assets in the world, backed by a six-year supply deficit from electric vehicles, solar, and AI. Those three industries are the cornerstone of our high-tech future. That's an undeniable fact. The demand for silver will continue to exponentially rise."
+
+"Here's what most people don't realize - the real supply-demand crunch hasn't even hit yet. So you aren't late. In fact, you're early. You're getting in before the real floor sets and we see shocking new highs. It's a classic squeeze and the writing is on the wall."
+
+"The reason for my call today is to secure a 5-minute introduction call between you and Chris. He's a 20-year veteran with many clients who've been with him just as long. He believes these are the absolute best times to create new relationships - a historic setup that can deliver a new client an epic first win."
+
+"Do you have just a few minutes to chat with Chris later today or tomorrow?"
+
+(Wait - if yes, call book_appointment and end the call warmly.)
+
+--- OBJECTIONS ---
+
+OBJECTION: Silver too high or too late:
+"I get the too late concern - but think about Bitcoin at ten thousand. Everyone thought it was the top, and in hindsight it was a gift. Silver is in that same moment right now. But you are not betting on speculation. You are investing in the most stable asset in the world, backed by a six-year supply deficit driven by electric vehicles, solar, and AI. The real crunch has not even hit yet. You are not late - you are early, getting in before the real floor resets."
+Then: "Do you have a few minutes later today or tomorrow to connect with Chris?"
+
+OBJECTION: What is the play?
+"Chris is recommending an 8-week dollar-cost averaging strategy - moving before the supply squeeze fully takes hold. Even Rick Harrison from Pawn Stars said last weekend he cannot keep a single ounce of silver in his shop. The retail shortage is finally catching up to industrial demand."
+Then: "Do you have time later today or tomorrow - mornings or afternoons?"
+
+OBJECTION: Silver already moved / already ran:
+"It has had a strong run - but this is exactly like Nvidia in 2024. Everyone expected a correction, yet it jumped another 62 percent because the growth was fundamental. This is not speculation - it is a structural supply squeeze. We cannot turn on new silver mines overnight to meet the surge from AI and green energy. The market simply has not caught up to that reality yet."
+Then: "Do you have time later today or tomorrow to chat with Chris for just 5 minutes?"
+
+OBJECTION: Not interested:
+"No problem at all. I appreciate your time - have a great day."
+(End call.)
+
+--- BOOKING ---
+As soon as they confirm a day and AM or PM, call book_appointment immediately with day, time_of_day, and any notes.
+Then end the call warmly.
+`.trim();
+
+          const inboundPrompt = `
+#DO NOT ASK FOR THEIR EMAIL ADDRESS, WE ALREADY HAVE IT
+#DO NOT WORRY ABOUT TIME ZONES
+#DO NOT BOOK A SPECIFIC TIME - CONFIRM A DAY AND AM OR PM CALLBACK ONLY
+#DO NOT GO OFF SCRIPT UNLESS THERE IS AN OBJECTION OR A QUESTION
+#ONCE THEY AGREE TO A MEETING, GET OFF THE PHONE - THANK THEM AND END THE CALL
+
+Identity: You are Orion, an inbound representative for Chris, one of our Senior Strategy Advisors at Corventa Metals.
+
+Tone: Calm, warm, professional, confident. Natural and conversational.
+
+Core Rules:
+- NEVER ask for their email. We already have it.
+- NEVER confirm specific times or time zones. Only confirm day and AM or PM.
+- Once they agree to a meeting, wrap up and end the call immediately.
+- After any objection, always pivot back to booking the call.
+
+--- OPENING ---
+
+"Hi, I'm calling on behalf of Chris, one of our Senior Strategy Advisors here at Corventa Metals. Chris was trying to reach you - he is issuing an urgent market alert to his clients. He believes he has identified a historic technical setup, one that would trigger a major surge in the silver market in the coming weeks. This is a personally high-conviction silver play, rooted in technological shifts, historical trends, and measurable data. He is not available this second, but he would love to set up a 5 to 10 minute call to let you know all about his time-sensitive strategy. Are you available for a call from him later today, or maybe tomorrow - what works best for you, mornings or afternoons?"
+
+(Wait for response)
+
+IF THEY AGREE:
+"Perfect. I will make sure Chris gives you a call then. I can also go ahead and have him send you an email with his bi-weekly newsletter that he personally writes, along with all the company information. Sound good?"
+
+(Wait)
+
+IF YES TO NEWSLETTER:
+"Great, I will let him know. Have a great day!"
+(Call book_appointment. Call send_newsletter. End call.)
+
+--- OBJECTIONS ---
+
+OBJECTION: Too late or silver too high:
+"I get the too late concern - think about Bitcoin at ten thousand. Everyone thought it was the top. Silver is in that same moment right now. But you are not betting on speculation - you are investing in the most stable asset in the world, backed by a six-year supply deficit driven by EVs, solar, and AI. The real crunch has not even hit yet. You are not late - you are early."
+Then: "Chris can explain his full strategy when you talk. He has over 20 years of experience. Do you have time later today or tomorrow - mornings or afternoons?"
+
+OBJECTION: What is the play?
+"Chris is recommending an 8-week dollar-cost averaging strategy - moving before the supply squeeze takes hold. Even Rick Harrison from Pawn Stars said last weekend he cannot keep a single ounce of silver in his shop."
+Then: "Do you have time later today or tomorrow for a quick intro call - mornings or afternoons?"
+
+OBJECTION: Silver already ran / already moved:
+"It has had a strong run - but think of Nvidia in 2024. Everyone expected a correction, yet it jumped another 62 percent on pure fundamentals. This is not speculation - it is a structural supply squeeze. We cannot turn on new mines overnight to meet demand from AI and green energy."
+Then: "Do you have time later today or tomorrow to chat with Chris for just 5 minutes?"
+
+--- BOOKING ---
+Once they confirm day and AM or PM, call book_appointment immediately.
+If they agree to newsletter, call send_newsletter.
+Include any conversation notes in the notes field.
+End the call warmly.
+`.trim();
 
           const prompt = isInbound ? inboundPrompt : outboundPrompt;
 
           dgWs.send(JSON.stringify({
             type: 'Settings',
             audio: {
-              input:  { encoding: 'mulaw', sample_rate: 8000 },
+              input: { encoding: 'mulaw', sample_rate: 8000 },
               output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
             },
             agent: {
               listen: {
-                provider: { type: 'deepgram', model: 'nova-2' }
+                provider: {
+                  type: 'deepgram',
+                  model: 'flux-general-en',
+                  version: 'v2'
+                }
               },
               think: {
-                provider: { type: 'open_ai', model: 'gpt-4.1-nano' },
-                prompt,
+                provider: {
+                  type: 'open_ai',
+                  model: 'gpt-4.1-nano'
+                },
+                prompt: prompt,
                 functions: [
                   {
                     name: 'book_appointment',
-                    description: 'Call this as soon as the lead confirms a day and AM or PM for their call with Chris.',
+                    description: 'Call this as soon as the lead confirms a day and AM or PM for their call with Chris. Include qualifier answers in notes.',
                     parameters: {
                       type: 'object',
                       properties: {
-                        day:         { type: 'string', description: 'Day they agreed to e.g. today, tomorrow, Monday' },
-                        time_of_day: { type: 'string', enum: ['AM', 'PM'], description: 'Morning or afternoon' },
-                        notes:       { type: 'string', description: 'Qualifier answers: metals purchased, liquidity, retirement interest' }
+                        day: {
+                          type: 'string',
+                          description: 'The day they agreed to e.g. today, tomorrow, Monday, March 15th'
+                        },
+                        time_of_day: {
+                          type: 'string',
+                          enum: ['AM', 'PM'],
+                          description: 'Morning or afternoon'
+                        },
+                        notes: {
+                          type: 'string',
+                          description: 'Qualifier answers: prior metals purchased, liquidity status, retirement account interest'
+                        }
                       },
                       required: ['day', 'time_of_day']
                     }
                   },
                   {
                     name: 'send_newsletter',
-                    description: 'Call this if the lead agreed to receive the bi-weekly newsletter.',
+                    description: 'Call this if the lead agreed to receive Chris\'s bi-weekly newsletter.',
                     parameters: {
                       type: 'object',
-                      properties: { confirmed: { type: 'boolean', description: 'Always true when called' } },
+                      properties: {
+                        confirmed: {
+                          type: 'boolean',
+                          description: 'Always true when called'
+                        }
+                      },
                       required: ['confirmed']
                     }
                   }
@@ -149,34 +241,27 @@ IF YES: call send_newsletter then say "Have a great day!" then call book_appoint
                 provider: {
                   type: 'cartesia',
                   model_id: 'sonic-2',
-                  voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' },
+                  voice: {
+                    mode: 'id',
+                    id: '86e30c1d-714b-4074-a1f2-1cb6b552fb49'
+                  },
                   language: 'en'
                 },
                 endpoint: {
                   url: 'https://api.cartesia.ai/tts/bytes',
-                  headers: { 'x-api-key': process.env.CARTESIA_API_KEY || 'sk_car_rKBM7SnrM1aLwSBpfwjj5w' }
+                  headers: {
+                    'x-api-key': process.env.CARTESIA_API_KEY || 'sk_car_rKBM7SnrM1aLwSBpfwjj5w'
+                  }
                 }
               }
             }
           }));
-
-          // Inbound: inject greeting after settings sent
-          if (isInbound) {
-            console.log('[INBOUND] Injecting greeting...');
-            setTimeout(() => {
-              if (dgWs.readyState === WebSocket.OPEN) {
-                dgWs.send(JSON.stringify({
-                  type: 'InjectAgentMessage',
-                  message: 'Thank you for calling Corventa Metals, this is Orion. How can I help you today?'
-                }));
-              }
-            }, 1000);
-          }
         });
 
         dgWs.on('message', async (data, isBinary) => {
           if (isBinary) {
             if (ws.readyState === WebSocket.OPEN && streamSid) {
+              firstAudioReceived = true;
               ws.send(JSON.stringify({
                 event: 'media',
                 streamSid,
@@ -185,24 +270,36 @@ IF YES: call send_newsletter then say "Have a great day!" then call book_appoint
             }
             return;
           }
+
           try {
             const dgMsg = JSON.parse(data.toString());
+
             if (dgMsg.type === 'ConversationText') {
               console.log('[CHAT] ' + dgMsg.role + ': ' + dgMsg.content);
             }
+
             if (dgMsg.type === 'Error') {
-              console.error('[ERROR] Deepgram:', JSON.stringify(dgMsg));
+              console.error('[ERROR] Deepgram Error Message:', JSON.stringify(dgMsg));
             }
+
             if (dgMsg.type === 'FunctionCallRequest') {
               const calls = dgMsg.functions || [];
               for (const call of calls) {
                 const callArgs = call.arguments ? JSON.parse(call.arguments) : (call.input || {});
-                console.log('[TOOL] ' + call.name + ' | ' + JSON.stringify(callArgs));
+                console.log('[TOOL] Tool Triggered: ' + call.name + ' | Params: ' + JSON.stringify(callArgs));
+
                 await fetch('https://agentbman2.base44.app/api/functions/postCallSync', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ tool: call.name, lead_id: leadId, campaign_id: campaignId, email, params: callArgs })
+                  body: JSON.stringify({
+                    tool: call.name,
+                    lead_id: leadId,
+                    campaign_id: campaignId,
+                    params: callArgs,
+                    email: email
+                  })
                 }).catch(e => console.error('Sync Error:', e));
+
                 dgWs.send(JSON.stringify({
                   type: 'FunctionCallResponse',
                   id: call.id,
@@ -212,18 +309,19 @@ IF YES: call send_newsletter then say "Have a great day!" then call book_appoint
               }
             }
           } catch (e) {
-            console.error('Parse error:', e);
+            console.error('Failed to parse Deepgram message:', e);
           }
         });
 
-        dgWs.on('error', (e) => console.error('[ERROR] Deepgram WS:', e.message));
-        dgWs.on('close', (code) => {
-          console.log('[CLOSE] Deepgram closed: ' + code);
+        dgWs.on('error', (e) => console.error('[ERROR] Deepgram WS Error:', e.message));
+        dgWs.on('close', (code, reason) => {
+          console.log('[CLOSE] Deepgram closed: ' + code + ' | Reason: ' + (reason ? reason.toString() : 'none'));
           if (keepAliveInterval) clearInterval(keepAliveInterval);
         });
       }
 
       if (msg.event === 'media' && dgWs && dgWs.readyState === WebSocket.OPEN) {
+        firstAudioReceived = true;
         const audioBuffer = Buffer.from(msg.media.payload, 'base64');
         if (audioBuffer.length > 0) dgWs.send(audioBuffer);
       }
