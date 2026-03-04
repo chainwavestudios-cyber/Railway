@@ -243,21 +243,20 @@ Final close — strong, upbeat:
       inworldWs.send(JSON.stringify({
         type: 'session.update',
         session: {
-          model: 'gpt-4o-mini',
+          model: 'llama-3.3-70b-versatile',
           output_modalities: ['audio', 'text'],
           instructions: prompt,
-          input_audio_transcription: { model: 'whisper-1' },
-          turn_detection: null,
           audio: {
             input: {
+              transcription: {
+                model: 'assemblyai/universal-streaming-multilingual'
+              },
               turn_detection: {
-                type: 'server_vad',
-                threshold: 0.3,
+                type: 'semantic_vad',
                 eagerness: 'high',
                 create_response: true,
                 interrupt_response: true
-              },
-              transcription: { model: 'whisper-1' }
+              }
             },
             output: {
               voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
@@ -413,7 +412,10 @@ Final close — strong, upbeat:
           audioQueue.push(pcmBuf);
         } else {
           // Only mark hasAudio and schedule commit if this frame has actual speech
-          if (!isSilent(mulawBuf)) hasAudio = true;
+          if (!isSilent(mulawBuf)) {
+            if (!hasAudio) console.log('[VAD] Speech detected');
+            hasAudio = true;
+          }
           inworldWs.send(JSON.stringify({
             type: 'input_audio_buffer.append',
             audio: pcmBuf.toString('base64')
