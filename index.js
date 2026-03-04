@@ -83,6 +83,19 @@ wss.on('connection', (ws, req) => {
   let audioQueue   = [];
   let inworldReady = false;
   let mediaCount   = 0;
+  let silenceTimer = null;
+  let hasAudio     = false;
+
+  function scheduleCommit() {
+    if (silenceTimer) clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => {
+      if (!inworldWs || inworldWs.readyState !== WebSocket.OPEN || !hasAudio) return;
+      console.log('[VAD] Silence detected — committing audio buffer and triggering response');
+      hasAudio = false;
+      inworldWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+      inworldWs.send(JSON.stringify({ type: 'response.create' }));
+    }, 600); // 600ms silence = end of turn
+  }
 
   const prompt = `Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
 
@@ -214,36 +227,22 @@ Final close — strong, upbeat:
       // FIX 3: Added explicit input audio format definition
       // FIX 4: Switched to server_vad with threshold 0.4 for reliable "Hello" detection
       // FIX 5: Added explicit output format definition to guarantee 24kHz PCM back
-      // Inworld mirrors the OpenAI Realtime flat-field schema.
-      // All fields must be TOP-LEVEL in session — nested audio.input/output is ignored on session.update.
-      // Confirmed by session.updated log always reflecting semantic_vad despite nested overrides.
       inworldWs.send(JSON.stringify({
         type: 'session.update',
         session: {
           model: 'gpt-4o-mini',
-          modalities: ['audio', 'text'],
+          output_modalities: ['audio', 'text'],
           instructions: prompt,
-
-          // Flat audio format fields (OpenAI Realtime schema)
-          input_audio_format: 'pcm16',
-          output_audio_format: 'pcm16',
-
-          // Flat voice field
+          input_audio_transcription: { model: 'whisper-1' },
+          // Disable VAD entirely — we will manually commit audio and trigger responses
+          // This bypasses the broken semantic_vad that ignores our override
+          turn_detection: null,
           voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
-
-          // Flat transcription field
-          input_audio_transcription: {
-            model: 'whisper-1'
-          },
-
-          // Flat turn_detection — this is what Inworld actually reads and reflects back
-          turn_detection: {
-            type: 'server_vad',
-            threshold: 0.4,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 500,
-            create_response: true,
-            interrupt_response: true
+          audio: {
+            output: {
+              model: 'inworld-tts-1.5-max',
+              speed: 1.0
+            }
           },
           tools: [
             {
@@ -391,15 +390,18 @@ Final close — strong, upbeat:
         if (!inworldReady || !inworldWs || inworldWs.readyState !== WebSocket.OPEN) {
           audioQueue.push(pcmBuf);
         } else {
+          hasAudio = true;
           inworldWs.send(JSON.stringify({
             type: 'input_audio_buffer.append',
             audio: pcmBuf.toString('base64')
           }));
+          scheduleCommit();
         }
       }
 
       if (msg.event === 'stop') {
         console.log('[STOP] Stream stopped: ' + streamSid);
+        if (silenceTimer) clearTimeout(silenceTimer);
         if (keepAlive) clearInterval(keepAlive);
         if (inworldWs) inworldWs.close(1000, 'Call ended');
       }
