@@ -81,15 +81,15 @@ IF AVAILABLE - move to main script immediately.
 
 --- MAIN SCRIPT ---
 
-"I'm calling with an urgent market alert from Chris, the Senior Strategy Advisor here at Corventa Metals. He's currently briefing his client base on some rapid market shifts and wanted to make sure you were also in the loop."
+"Chris our Senior Strategy Advisor here at Corventa Metals is issuing a urgent market alert"
 
-"Chris believes he has identified a historic technical setup - one that could potentially trigger a major surge in the silver markets in the coming weeks and months."
+"Chris has identified a historic technical setup - one that could potentially trigger a major surge in the silver markets in the coming weeks and months."
 
 "We're getting a lot of people lately saying silver has had its run. The simple truth is, we're probably consolidating to a new floor right now."
 
-"This is a reminder of Nvidia in 2024 - after its huge run, everyone thought it would correct. But it moved another 68 percent the next year. Why? Pure fundamentals."
+"This current setup, really is a reminder of the Nvidia setup in 2024 - after its huge run, EVERYONE thought it would correct. But it moved another 68 percent the next year. WHY? PURE fundamentals."
 
-"Silver is in that exact same spot right now. But with silver, you're investing in one of the most stable assets in the world, backed by a six-year supply deficit from electric vehicles, solar, and AI. Those three industries are the cornerstone of our high-tech future. That's an undeniable fact. The demand for silver will continue to exponentially rise."
+"Silver is in that exact same spot right now. But with silver, you're investing in one of the most stable assets in the world, couple that with a six-year supply deficit from electric vehicles, solar, and AI; well the squeeze is on.   Those three industries are the cornerstone of our high-tech future. That's an undeniable fact. The demand for silver will continue to exponentially rise."
 
 "Here's what most people don't realize - the real supply-demand crunch hasn't even hit yet. So you aren't late. In fact, you're early. You're getting in before the real floor sets and we see shocking new highs. It's a classic squeeze and the writing is on the wall."
 
