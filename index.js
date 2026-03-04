@@ -8,9 +8,6 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:', err));
-process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));/Users/christopherj/Downloads/IncomingAIAgent.jsx
-
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
 wss.on('connection', (ws, req) => {
@@ -105,7 +102,7 @@ wss.on('connection', (ws, req) => {
   },
   "conversation_flow": {
     "greeting": "Hello, this is David.",
-    "(WAIT FOR RESPONSE')
+    "(WAIT FOR RESPONSE')"
     "context_reply": "Chris was trying to reach you. He has issued an urgent market alert regarding a historic technical setup in the silver market. It's a high-conviction play rooted in technological shifts and measurable data.",
     "the_ask": "He isn't available this second, but wants to set up a 5-10 minute call to explain this strategy. Are you available later today or tomorrow? What works best—mornings or afternoons?",
     "closing": "Great, I'll have Chris call you then. I'll also have him send his bi-weekly newsletter and company info to your email. Sound good? [Trigger: send_newsletter, book_appointment]"
