@@ -15,65 +15,78 @@ app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
 // ---------------------------------------------------------------------------
 // Audio helpers: Twilio sends mulaw 8kHz, Inworld expects PCM16 24kHz
+// Standard ITU-T G.711 μ-law decode table (correct values)
 // ---------------------------------------------------------------------------
 
-function mulawToPcm16(mulawBuf) {
-  // μ-law decode table
-  const MULAW_BIAS = 33;
-  const out = Buffer.alloc(mulawBuf.length * 2);
-  for (let i = 0; i < mulawBuf.length; i++) {
-    let u = ~mulawBuf[i];
-    const sign = u & 0x80;
-    const exponent = (u >> 4) & 0x07;
-    let mantissa = u & 0x0F;
-    let sample = ((mantissa << 3) + MULAW_BIAS) << exponent;
-    sample -= MULAW_BIAS;
-    if (sign === 0) sample = -sample;
-    out.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), i * 2);
+const MULAW_DECODE = new Int16Array([
+  -32124,-31100,-30076,-29052,-28028,-27004,-25980,-24956,
+  -23932,-22908,-21884,-20860,-19836,-18812,-17788,-16764,
+  -15996,-15484,-14972,-14460,-13948,-13436,-12924,-12412,
+  -11900,-11388,-10876,-10364, -9852, -9340, -8828, -8316,
+   -7932, -7676, -7420, -7164, -6908, -6652, -6396, -6140,
+   -5884, -5628, -5372, -5116, -4860, -4604, -4348, -4092,
+   -3900, -3772, -3644, -3516, -3388, -3260, -3132, -3004,
+   -2876, -2748, -2620, -2492, -2364, -2236, -2108, -1980,
+   -1884, -1820, -1756, -1692, -1628, -1564, -1500, -1436,
+   -1372, -1308, -1244, -1180, -1116, -1052,  -988,  -924,
+    -876,  -844,  -812,  -780,  -748,  -716,  -684,  -652,
+    -620,  -588,  -556,  -524,  -492,  -460,  -428,  -396,
+    -372,  -356,  -340,  -324,  -308,  -292,  -276,  -260,
+    -244,  -228,  -212,  -196,  -180,  -164,  -148,  -132,
+    -120,  -112,  -104,   -96,   -88,   -80,   -72,   -64,
+     -56,   -48,   -40,   -32,   -24,   -16,    -8,     0,
+   32124, 31100, 30076, 29052, 28028, 27004, 25980, 24956,
+   23932, 22908, 21884, 20860, 19836, 18812, 17788, 16764,
+   15996, 15484, 14972, 14460, 13948, 13436, 12924, 12412,
+   11900, 11388, 10876, 10364,  9852,  9340,  8828,  8316,
+    7932,  7676,  7420,  7164,  6908,  6652,  6396,  6140,
+    5884,  5628,  5372,  5116,  4860,  4604,  4348,  4092,
+    3900,  3772,  3644,  3516,  3388,  3260,  3132,  3004,
+    2876,  2748,  2620,  2492,  2364,  2236,  2108,  1980,
+    1884,  1820,  1756,  1692,  1628,  1564,  1500,  1436,
+    1372,  1308,  1244,  1180,  1116,  1052,   988,   924,
+     876,   844,   812,   780,   748,   716,   684,   652,
+     620,   588,   556,   524,   492,   460,   428,   396,
+     372,   356,   340,   324,   308,   292,   276,   260,
+     244,   228,   212,   196,   180,   164,   148,   132,
+     120,   112,   104,    96,    88,    80,    72,    64,
+      56,    48,    40,    32,    24,    16,     8,     0
+]);
+
+// μ-law 8kHz → PCM16 24kHz (upsample 3x with linear interpolation)
+function twilioToInworld(mulawBuf) {
+  const srcLen = mulawBuf.length;
+  const dstLen = srcLen * 3; // 8kHz → 24kHz = exactly 3x
+  const out = Buffer.alloc(dstLen * 2);
+  for (let i = 0; i < srcLen; i++) {
+    const s0 = MULAW_DECODE[mulawBuf[i]];
+    const s1 = i + 1 < srcLen ? MULAW_DECODE[mulawBuf[i + 1]] : s0;
+    // Linear interpolation for 3 output samples per input sample
+    out.writeInt16LE(s0, (i * 3) * 2);
+    out.writeInt16LE(Math.round(s0 + (s1 - s0) / 3), (i * 3 + 1) * 2);
+    out.writeInt16LE(Math.round(s0 + (s1 - s0) * 2 / 3), (i * 3 + 2) * 2);
   }
   return out;
 }
 
-function pcm16ToMulaw(pcmBuf) {
-  const MULAW_BIAS = 33;
-  const MULAW_MAX = 0x1FFF;
-  const out = Buffer.alloc(pcmBuf.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    let sample = pcmBuf.readInt16LE(i * 2);
+// PCM16 24kHz → μ-law 8kHz (downsample 3x)
+function inworldToTwilio(pcm24kBuf) {
+  const srcSamples = pcm24kBuf.length / 2;
+  const dstSamples = Math.floor(srcSamples / 3);
+  const out = Buffer.alloc(dstSamples);
+  for (let i = 0; i < dstSamples; i++) {
+    let sample = pcm24kBuf.readInt16LE(i * 3 * 2);
+    // Encode PCM16 → μ-law
     let sign = 0;
     if (sample < 0) { sign = 0x80; sample = -sample; }
-    sample = Math.min(sample + MULAW_BIAS, MULAW_MAX);
-    let exponent = 7;
-    for (let expMask = 0x4000; (sample & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1);
-    const mantissa = (sample >> (exponent + 3)) & 0x0F;
-    out[i] = ~(sign | (exponent << 4) | mantissa) & 0xFF;
+    if (sample > 32635) sample = 32635;
+    sample += 0x84;
+    let exp = 7;
+    for (let expMask = 0x4000; (sample & expMask) === 0 && exp > 0; exp--, expMask >>= 1);
+    const mantissa = (sample >> (exp + 3)) & 0x0F;
+    out[i] = ~(sign | (exp << 4) | mantissa) & 0xFF;
   }
   return out;
-}
-
-// Resample PCM16 buffer from srcRate to dstRate (linear interpolation)
-function resamplePcm16(buf, srcRate, dstRate) {
-  const srcSamples = buf.length / 2;
-  const dstSamples = Math.round(srcSamples * dstRate / srcRate);
-  const out = Buffer.alloc(dstSamples * 2);
-  for (let i = 0; i < dstSamples; i++) {
-    const srcPos = i * srcRate / dstRate;
-    const srcIdx = Math.min(Math.floor(srcPos), srcSamples - 1);
-    out.writeInt16LE(buf.readInt16LE(srcIdx * 2), i * 2);
-  }
-  return out;
-}
-
-// Twilio mulaw 8kHz → PCM16 24kHz (for Inworld input)
-function twilioToInworld(mulawBuf) {
-  const pcm8k = mulawToPcm16(mulawBuf);
-  return resamplePcm16(pcm8k, 8000, 24000);
-}
-
-// PCM16 24kHz (from Inworld output) → mulaw 8kHz (for Twilio)
-function inworldToTwilio(pcm24kBuf) {
-  const pcm8k = resamplePcm16(pcm24kBuf, 24000, 8000);
-  return pcm16ToMulaw(pcm8k);
 }
 
 // ---------------------------------------------------------------------------
