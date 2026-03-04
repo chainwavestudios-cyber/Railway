@@ -360,6 +360,7 @@ Final close — strong, upbeat:
   }
 
   browser.on('message', (message) => {
+    console.log('[TWILIO RAW]', message.toString().substring(0, 120));
     let msg;
     try { msg = JSON.parse(message.toString()); } catch { return; }
 
