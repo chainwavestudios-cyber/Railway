@@ -229,6 +229,7 @@ Final close — strong, upbeat:
             audio: {
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
+                assemblySettings: { endOfTurnConfidenceThreshold: 0.5 },
                 turn_detection: {
                   type: 'semantic_vad',
                   eagerness: 'very_high',
