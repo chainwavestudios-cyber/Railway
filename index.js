@@ -216,7 +216,7 @@ Final close — strong, upbeat:
         type: 'session.update',
         session: {
           type: 'realtime',
-          modelId: 'google-ai-studio/gemini-2.5-flash',
+          model: 'gpt-4o-mini',
           output_modalities: ['audio', 'text'],
           instructions: prompt,
           audio: {
@@ -277,7 +277,7 @@ Final close — strong, upbeat:
       try { msg = JSON.parse(data.toString()); }
       catch (e) { return; }
 
-      console.log('[INWORLD RAW]', JSON.stringify(msg).substring(0, 200));
+      console.log('[INWORLD RAW]', JSON.stringify(msg).substring(0, 800));
 
       // Session ready
       if (msg.type === 'session.updated') {
