@@ -89,8 +89,11 @@ wss.on('connection', (ws, req) => {
   function scheduleCommit() {
     if (silenceTimer) clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
-      if (!inworldWs || inworldWs.readyState !== WebSocket.OPEN || !hasAudio) return;
-      console.log('[VAD] Silence detected — committing audio buffer and triggering response');
+      if (!inworldWs || inworldWs.readyState !== WebSocket.OPEN || !hasAudio) {
+        console.log('[VAD] Silence timer fired but skipping — hasAudio: ' + hasAudio + ' wsState: ' + (inworldWs?.readyState));
+        return;
+      }
+      console.log('[VAD] Committing audio + firing response.create');
       hasAudio = false;
       inworldWs.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
       inworldWs.send(JSON.stringify({ type: 'response.create' }));
@@ -206,17 +209,19 @@ Final close — strong, upbeat:
 
   // ── Connect to Inworld Realtime API ─────────────────────────────────────
   function connectInworld() {
-    const apiKey = process.env.INWORLD_API_KEY;
-    if (!apiKey) {
-      console.error('[INWORLD] INWORLD_API_KEY not set');
+    const apiKey    = process.env.INWORLD_API_KEY;
+    const apiSecret = process.env.INWORLD_API_SECRET;
+    if (!apiKey || !apiSecret) {
+      console.error('[INWORLD] INWORLD_API_KEY or INWORLD_API_SECRET not set');
       return;
     }
+    const authHeader = `Basic ${Buffer.from(`${apiKey}:${apiSecret}`).toString('base64')}`;
     const sessionId = randomUUID();
     const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`;
     console.log('[INWORLD] Connecting | session: ' + sessionId);
 
     inworldWs = new WebSocket(wsUrl, {
-      headers: { 'Authorization': `Basic ${apiKey}` }
+      headers: { 'Authorization': authHeader }
     });
 
     inworldWs.on('open', () => {
@@ -234,12 +239,20 @@ Final close — strong, upbeat:
           output_modalities: ['audio', 'text'],
           instructions: prompt,
           input_audio_transcription: { model: 'whisper-1' },
-          // Disable VAD entirely — we will manually commit audio and trigger responses
-          // This bypasses the broken semantic_vad that ignores our override
           turn_detection: null,
-          voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
           audio: {
+            input: {
+              turn_detection: {
+                type: 'server_vad',
+                threshold: 0.3,
+                eagerness: 'high',
+                create_response: true,
+                interrupt_response: true
+              },
+              transcription: { model: 'whisper-1' }
+            },
             output: {
+              voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
               model: 'inworld-tts-1.5-max',
               speed: 1.0
             }
@@ -290,9 +303,10 @@ Final close — strong, upbeat:
       console.log('[INWORLD RAW]', JSON.stringify(msg).substring(0, 800));
 
       if (msg.type === 'session.updated') {
-        // Log VAD type so we can confirm the override took effect
-        const vadType = msg.session?.turn_detection?.type || 'unknown';
-        console.log('[INWORLD] Session configured | VAD: ' + vadType);
+        const vad = msg.session?.audio?.input?.turn_detection?.type || msg.session?.turn_detection?.type || 'unknown';
+        const voice = msg.session?.audio?.output?.voice || 'unknown';
+        const instructions_len = msg.session?.instructions?.length || 0;
+        console.log(`[INWORLD] Session updated | VAD: ${vad} | Voice: ${voice} | Instructions: ${instructions_len} chars`);
         inworldReady = true;
 
         if (audioQueue.length > 0) {
