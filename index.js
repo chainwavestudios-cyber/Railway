@@ -237,7 +237,7 @@ ALWAYS include day and time_of_day params in book_appointment.`;
           `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`,
           {
             headers: {
-              Authorization: `Basic ${Buffer.from(`api-key:${inworldApiKey}`).toString('base64')}`
+              Authorization: `Basic ${inworldApiKey}`
             }
           }
         );
