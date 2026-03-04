@@ -70,9 +70,7 @@ wss.on('connection', (browser) => {
   let sessionReady = false;
   let reconnectAttempts = 0;
   let audioQueue = [];
-  let speechDuration = 0;
-  let silenceTimer = null;
-  let awaitingResponse = false;
+  let callActive = false;
   let leadId = 'unknown';
   let campaignId = 'unknown';
   let email = '';
@@ -85,11 +83,6 @@ wss.on('connection', (browser) => {
 
     const key = 'YWF2QmVkNTE2ZzlTamFpUERHaHBna3pIa09yY0VEazI6aElUZkhQM0x0aWE3ZDFMcmpKdzdndVJKZ3lLQTlPYzZyNVY5ZzRMcTUxOU9Zbm5ydmh2T2FVMFpodkpuTFBlcw==';
 
-    console.log('[AUTH DEBUG]', {
-      length: key.length,
-      first8: key.slice(0, 8),
-      last8: key.slice(-8),
-    });
 
     inworld = new WebSocket(
       `wss://api.inworld.ai/api/v1/realtime/session?key=voice-${Date.now()}&protocol=realtime`,
@@ -300,8 +293,6 @@ Final close — strong, upbeat:
           }
           audioQueue = [];
 
-          // Reset speech duration so auto-commit can fire on new speech after flush
-          speechDuration = 0;
         }
 
         console.log('[INWORLD] Ready — waiting for caller audio');
@@ -313,12 +304,10 @@ Final close — strong, upbeat:
 
       // ─── AUDIO: PCM16 24kHz → mulaw 8kHz → Twilio ───────────────────────
       if (msg.type === 'response.output_audio.delta' && msg.delta) {
-        awaitingResponse = true;
         if (browser.readyState === WebSocket.OPEN && streamSid) {
           try {
             const pcmBuf = Buffer.from(msg.delta, 'base64');
             const mulawBuf = pcm16_24kToMulaw(pcmBuf);
-            console.log('[AUDIO OUT] mulaw chunk size:', mulawBuf.length);
             // Send in 160-byte chunks (8kHz * 20ms = 160 bytes = 1 Twilio frame)
             for (let i = 0; i < mulawBuf.length; i += 160) {
               const chunk = mulawBuf.slice(i, i + 160);
@@ -359,14 +348,14 @@ Final close — strong, upbeat:
         }
       }
 
-      if (msg.type === 'response.done') { awaitingResponse = false; console.log('[DONE] Response complete'); }
+      if (msg.type === 'response.done') { console.log('[DONE] Response complete'); }
       if (msg.type === 'error') console.error('[INWORLD ERROR]', JSON.stringify(msg));
     });
 
     inworld.on('close', (code) => {
       console.log('[INWORLD] Closed (' + code + ')');
       sessionReady = false;
-      if (reconnectAttempts < MAX_RECONNECTS) {
+      if (callActive && reconnectAttempts < MAX_RECONNECTS) {
         reconnectAttempts++;
         console.log('[RECONNECT] Attempt', reconnectAttempts);
         setTimeout(() => connectInworld(callerFirstName), 1000);
@@ -379,9 +368,9 @@ Final close — strong, upbeat:
   }
 
   browser.on('message', (message) => {
-    console.log('[TWILIO RAW]', message.toString().substring(0, 120));
     let msg;
     try { msg = JSON.parse(message.toString()); } catch { return; }
+    if (msg.event !== 'media') console.log('[TWILIO]', msg.event);
 
     if (msg.event === 'start') {
       streamSid = msg.start.streamSid;
@@ -389,6 +378,7 @@ Final close — strong, upbeat:
       campaignId = msg.start.customParameters?.c || 'unknown';
       email = msg.start.customParameters?.e || '';
       callerFirstName = msg.start.customParameters?.f || msg.start.customParameters?.firstName || 'friend';
+      callActive = true;
       console.log('[START] Stream:', streamSid, '| Lead:', leadId, '| Name:', callerFirstName);
       connectInworld(callerFirstName);
     }
@@ -406,23 +396,12 @@ Final close — strong, upbeat:
         type: 'input_audio_buffer.append',
         audio: pcmBuf.toString('base64'),
       }));
-
-      // Auto-commit after 2 seconds of speech — silence timer unreliable on phone streams
-      speechDuration += 20; // each Twilio chunk = 20ms
-      if (speechDuration >= 2000 && !awaitingResponse) {
-        console.log('[AUTO COMMIT] 2s of speech detected — committing buffer');
-        awaitingResponse = true;
-        speechDuration = 0;
-        inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-        inworld.send(JSON.stringify({ type: 'response.create' }));
-      }
     }
 
     if (msg.event === 'stop') {
+      callActive = false;
       console.log('[STOP] Stream stopped:', streamSid);
       audioQueue = [];
-      speechDuration = 0;
-      if (silenceTimer) clearTimeout(silenceTimer);
       if (inworld) inworld.close();
     }
   });
@@ -430,8 +409,6 @@ Final close — strong, upbeat:
   browser.on('close', () => {
     console.log('[DISC] Client disconnected');
     audioQueue = [];
-    speechDuration = 0;
-    if (silenceTimer) clearTimeout(silenceTimer);
     if (inworld) inworld.close();
   });
 });
