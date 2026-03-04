@@ -68,36 +68,7 @@ function pcm16_24kToMulaw(pcmBuf) {
 }
 
 // ─── Inworld session management ───────────────────────────────────────────────
-let cachedSessionId = null;
-let sessionExpiry   = 0;
-
-async function getInworldSession() {
-  const now = Date.now();
-  if (cachedSessionId && now < sessionExpiry) return cachedSessionId;
-
-  const apiKey = process.env.INWORLD_API_KEY;
-  if (!apiKey) throw new Error('INWORLD_API_KEY not set');
-
-  const res = await fetch('https://api.inworld.ai/v1/session/open', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Basic ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({})
-  });
-
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Session open failed: ${res.status} ${txt}`);
-  }
-
-  const data = await res.json();
-  cachedSessionId = data.sessionId || data.session_id || data.id;
-  sessionExpiry   = now + 28 * 60 * 1000; // 28 min
-  console.log('[INWORLD] New session: ' + cachedSessionId);
-  return cachedSessionId;
-}
+// No session pre-auth needed — API key goes directly in the WS URL as ?key=
 
 // ─── WebSocket connection handler ─────────────────────────────────────────────
 wss.on('connection', (ws, req) => {
@@ -222,17 +193,13 @@ Final close — strong, upbeat:
 (Call book_appointment with day, time_of_day, and notes from qualifier answers.)`;
 
   // ── Connect to Inworld Realtime API ─────────────────────────────────────
-  async function connectInworld() {
-    let sessionId;
-    try {
-      sessionId = await getInworldSession();
-    } catch (e) {
-      console.error('[INWORLD] Session error:', e.message);
+  function connectInworld() {
+    const apiKey = process.env.INWORLD_API_KEY;
+    if (!apiKey) {
+      console.error('[INWORLD] INWORLD_API_KEY not set');
       return;
     }
-
-    const apiKey = process.env.INWORLD_API_KEY;
-    const wsUrl  = `wss://api.inworld.ai/api/v1/realtime/session?key=${sessionId}&protocol=realtime`;
+    const wsUrl = `wss://api.inworld.ai/api/v1/realtime/session?key=${apiKey}&protocol=realtime`;
 
     inworldWs = new WebSocket(wsUrl, {
       headers: { 'Authorization': `Basic ${apiKey}` }
@@ -244,17 +211,24 @@ Final close — strong, upbeat:
       inworldWs.send(JSON.stringify({
         type: 'session.update',
         session: {
-          modalities: ['audio', 'text'],
+          type: 'realtime',
+          modelId: 'google-ai-studio/gemini-2.5-flash',
+          output_modalities: ['audio', 'text'],
           instructions: prompt,
-          voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
-          input_audio_format: 'pcm16',
-          output_audio_format: 'pcm16',
-          input_audio_transcription: { model: 'inworld-stt-1' },
-          turn_detection: {
-            type: 'server_vad',
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 500
+          audio: {
+            input: {
+              turn_detection: {
+                type: 'semantic_vad',
+                eagerness: 'medium',
+                create_response: true,
+                interrupt_response: true
+              }
+            },
+            output: {
+              voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
+              model: 'inworld-tts-1.5-max',
+              speed: 1.0
+            }
           },
           tools: [
             {
@@ -400,7 +374,7 @@ Final close — strong, upbeat:
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
         console.log('[START] Stream: ' + streamSid + ' | Lead: ' + leadId);
-        await connectInworld();
+        connectInworld();
       }
 
       if (msg.event === 'media') {
