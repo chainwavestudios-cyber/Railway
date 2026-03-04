@@ -223,12 +223,9 @@ Final close — strong, upbeat:
           type: 'session.update',
           session: {
             type: 'realtime',
-            model: 'auto',
+            model: 'inworld-realtime-1',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
-            assembly: {
-              endOfTurnConfidenceThreshold: 0.5,
-            },
             audio: {
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
