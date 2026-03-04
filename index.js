@@ -226,6 +226,9 @@ Final close — strong, upbeat:
             model: 'auto',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
+            assembly: {
+              endOfTurnConfidenceThreshold: 0.5,
+            },
             audio: {
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
