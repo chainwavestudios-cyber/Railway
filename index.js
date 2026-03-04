@@ -71,6 +71,7 @@ wss.on('connection', (browser) => {
   let reconnectAttempts = 0;
   let audioQueue = [];
   let callActive = false;
+  let silenceTimer = null;
   let leadId = 'unknown';
   let campaignId = 'unknown';
   let email = '';
@@ -230,7 +231,7 @@ Final close — strong, upbeat:
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
                   type: 'semantic_vad',
-                  eagerness: 'high',
+                  eagerness: 'very_high',
                   create_response: true,
                   interrupt_response: true,
                 },
@@ -296,6 +297,7 @@ Final close — strong, upbeat:
         }
 
         console.log('[INWORLD] Ready — waiting for caller audio');
+
       }
 
       if (msg.type === 'conversation.item.added' && msg.item?.content) {
@@ -392,15 +394,36 @@ Final close — strong, upbeat:
         return;
       }
 
+      // Peak diagnostic — remove once confirmed
+      let peak = 0;
+      for (let i = 0; i < pcmBuf.length; i += 2) {
+        const sample = pcmBuf.readInt16LE(i);
+        const abs = Math.abs(sample);
+        if (abs > peak) peak = abs;
+      }
+      if (peak > 500) console.log('[AUDIO PEAK]', peak);
+
       inworld.send(JSON.stringify({
         type: 'input_audio_buffer.append',
         audio: pcmBuf.toString('base64'),
       }));
+
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (inworld && inworld.readyState === WebSocket.OPEN) {
+          console.log('[COMMIT] Silence detected — committing buffer');
+          inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+        }
+      }, 800);
     }
 
     if (msg.event === 'stop') {
       callActive = false;
       console.log('[STOP] Stream stopped:', streamSid);
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (inworld && inworld.readyState === WebSocket.OPEN) {
+        inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+      }
       audioQueue = [];
       if (inworld) inworld.close();
     }
@@ -408,6 +431,7 @@ Final close — strong, upbeat:
 
   browser.on('close', () => {
     console.log('[DISC] Client disconnected');
+    if (silenceTimer) clearTimeout(silenceTimer);
     audioQueue = [];
     if (inworld) inworld.close();
   });
