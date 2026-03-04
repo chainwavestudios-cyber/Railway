@@ -255,6 +255,7 @@ ALWAYS include day and time_of_day params in book_appointment.`;
         inworldWs.on('message', async (data) => {
           try {
             const event = JSON.parse(data.toString());
+            console.log('[INWORLD RAW]', JSON.stringify(event));
 
             // Session ready — configure it
             if (event.type === 'session.created') {
