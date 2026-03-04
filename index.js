@@ -214,38 +214,36 @@ Final close — strong, upbeat:
       // FIX 3: Added explicit input audio format definition
       // FIX 4: Switched to server_vad with threshold 0.4 for reliable "Hello" detection
       // FIX 5: Added explicit output format definition to guarantee 24kHz PCM back
-      // NOTE: Inworld ignores nested audio.input overrides on session.update.
-      // turn_detection and transcription must be at the TOP LEVEL of session.
-      // Confirmed by: session.updated still showing semantic_vad despite nested override.
+      // Inworld mirrors the OpenAI Realtime flat-field schema.
+      // All fields must be TOP-LEVEL in session — nested audio.input/output is ignored on session.update.
+      // Confirmed by session.updated log always reflecting semantic_vad despite nested overrides.
       inworldWs.send(JSON.stringify({
         type: 'session.update',
         session: {
-          type: 'realtime',
           model: 'gpt-4o-mini',
-          output_modalities: ['audio', 'text'],
+          modalities: ['audio', 'text'],
           instructions: prompt,
 
-          // Top-level transcription (activates Whisper on incoming audio)
+          // Flat audio format fields (OpenAI Realtime schema)
+          input_audio_format: 'pcm16',
+          output_audio_format: 'pcm16',
+
+          // Flat voice field
+          voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
+
+          // Flat transcription field
           input_audio_transcription: {
             model: 'whisper-1'
           },
 
-          // Top-level VAD override — this is what Inworld actually reads
+          // Flat turn_detection — this is what Inworld actually reads and reflects back
           turn_detection: {
             type: 'server_vad',
             threshold: 0.4,
+            prefix_padding_ms: 300,
             silence_duration_ms: 500,
             create_response: true,
             interrupt_response: true
-          },
-
-          // Voice/TTS settings still go in audio.output
-          audio: {
-            output: {
-              voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
-              model: 'inworld-tts-1.5-max',
-              speed: 1.0
-            }
           },
           tools: [
             {
@@ -294,7 +292,7 @@ Final close — strong, upbeat:
 
       if (msg.type === 'session.updated') {
         // Log VAD type so we can confirm the override took effect
-        const vadType = msg.session?.turn_detection?.type || msg.session?.audio?.input?.turn_detection?.type || 'unknown';
+        const vadType = msg.session?.turn_detection?.type || 'unknown';
         console.log('[INWORLD] Session configured | VAD: ' + vadType);
         inworldReady = true;
 
