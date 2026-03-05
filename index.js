@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v45 — gemini-2.5-flash + semantic_vad + buffer clear');
+console.log('[VERSION] Build v46 — packet diagnostic');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -426,12 +426,16 @@ Final close — strong, upbeat:
         return;
       }
 
+      const audioB64 = pcmBuf.toString('base64');
       inworld.send(JSON.stringify({
         type: 'input_audio_buffer.append',
-        audio: pcmBuf.toString('base64'),
+        audio: audioB64,
       }));
       appendCount++;
       if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
+      if (appendCount === 1) {
+        console.log('[DIAG] First packet — mulaw bytes:', mulawBuf.length, '| pcm bytes:', pcmBuf.length, '| b64 length:', audioB64.length, '| first 4 pcm bytes (hex):', pcmBuf.slice(0,4).toString('hex'));
+      }
 
 
 
