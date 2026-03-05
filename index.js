@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v40 — RMS speech detection, commit on real silence');
+console.log('[VERSION] Build v41 — wait for committed event before response.create');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -76,6 +76,7 @@ wss.on('connection', (browser) => {
   let audioAppended = false;
   let appendCount = 0;
   let isPlaying = false;
+  let pendingResponseAfterCommit = false;
   let leadId = 'unknown';
   let campaignId = 'unknown';
   let email = '';
@@ -362,6 +363,14 @@ Final close — strong, upbeat:
         }
       }
 
+      if (msg.type === 'input_audio_buffer.committed') {
+        console.log('[COMMITTED] Buffer committed — creating response');
+        if (pendingResponseAfterCommit && inworld.readyState === WebSocket.OPEN) {
+          pendingResponseAfterCommit = false;
+          inworld.send(JSON.stringify({ type: 'response.create' }));
+        }
+      }
+
       if (msg.type === 'response.output_audio.done') { isPlaying = false; }
       if (msg.type === 'response.done') { console.log('[DONE] Response complete'); isPlaying = false; }
       if (msg.type === 'error') console.error('[INWORLD ERROR]', JSON.stringify(msg));
@@ -430,12 +439,8 @@ Final close — strong, upbeat:
         silenceTimer = setTimeout(() => {
           if (inworld && inworld.readyState === WebSocket.OPEN) {
             console.log('[FALLBACK COMMIT] Speech ended — committing');
+            pendingResponseAfterCommit = true;
             inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-            setTimeout(() => {
-              if (inworld && inworld.readyState === WebSocket.OPEN) {
-                inworld.send(JSON.stringify({ type: 'response.create' }));
-              }
-            }, 150);
           }
         }, 1000);
       }
