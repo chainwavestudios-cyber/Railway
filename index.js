@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v15 — Basic auth, legacy endpoint, modern payload');
+console.log('[VERSION] Build v17 — model not modelId');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -222,7 +222,7 @@ Final close — strong, upbeat:
         const sessionPayload = {
           type: 'session.update',
           session: {
-            modelId: 'openai/gpt-4o-mini',
+            model: 'openai/gpt-4o-mini',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
             audio: {
@@ -271,6 +271,7 @@ Final close — strong, upbeat:
             temperature: 0.8,
           },
         };
+        console.log('[SESSION PAYLOAD]', JSON.stringify(sessionPayload, null, 0));
         inworld.send(JSON.stringify(sessionPayload));
       }
 
