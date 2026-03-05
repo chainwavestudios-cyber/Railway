@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v43 — server_vad only, no manual commits, buffer clear after response');
+console.log('[VERSION] Build v45 — gemini-2.5-flash + semantic_vad + buffer clear');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -226,17 +226,17 @@ Final close — strong, upbeat:
         const sessionPayload = {
           type: 'session.update',
           session: {
-            model: 'gpt-4o-mini',
+            model: 'gemini-2.5-flash',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
             audio: {
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
-                  type: 'server_vad',
-                  threshold: 0.3,
-                  prefix_padding_ms: 300,
-                  silence_duration_ms: 500,
+                  type: 'semantic_vad',
+                  eagerness: 'medium',
+                  create_response: true,
+                  interrupt_response: true,
                 },
               },
               output: {
