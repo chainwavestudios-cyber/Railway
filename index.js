@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v57 — Inworld official conversion code, 100ms chunks');
+console.log('[VERSION] Build v58 — fix mulawDecode exponent=0, fix queue flush');
 
 // ─── Audio conversion utils (from Inworld support) ──────────────────────────
 
@@ -22,7 +22,7 @@ function mulawDecode(mulawByte) {
   const sign = mulawByteInverted & 0x80;
   const exponent = (mulawByteInverted >> 4) & 0x07;
   const mantissa = mulawByteInverted & 0x0f;
-  let magnitude = ((mantissa << 3) | BIAS) << (exponent - 1);
+  let magnitude = exponent > 0 ? (((mantissa << 3) | BIAS) << (exponent - 1)) : ((mantissa << 3) | BIAS) >> 1;
   return sign ? magnitude : -magnitude;
 }
 
@@ -309,11 +309,16 @@ Final close — strong, upbeat:
           console.log(`[QUEUE] Flushing ${audioQueue.length} buffered audio packets`);
           for (const chunk of audioQueue) {
             if (inworld.readyState === WebSocket.OPEN) {
-              inworld.send(JSON.stringify({
-                type: 'input_audio_buffer.append',
-                audio: chunk.toString('base64'),
-              }));
+              audioAccum = Buffer.concat([audioAccum, chunk]);
             }
+          }
+          // Send any accumulated audio immediately
+          if (audioAccum.length > 0 && inworld.readyState === WebSocket.OPEN) {
+            inworld.send(JSON.stringify({
+              type: 'input_audio_buffer.append',
+              audio: audioAccum.toString('base64'),
+            }));
+            audioAccum = Buffer.alloc(0);
           }
           audioQueue = [];
         }
@@ -469,7 +474,7 @@ Final close — strong, upbeat:
       const pcmBuf = Buffer.from(twilioToInworld(msg.media.payload), 'base64');
 
       if (!sessionReady || !inworld || inworld.readyState !== WebSocket.OPEN) {
-        audioQueue.push(pcmBuf);
+        audioQueue.push(pcmBuf); // stores converted PCM
         return;
       }
 
