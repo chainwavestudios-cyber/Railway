@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v21 — key param restored');
+console.log('[VERSION] Build v24 — server_vad + forced test response on session.updated');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -97,7 +97,11 @@ wss.on('connection', (browser) => {
       }
     }, 10000);
 
-    const prompt = `Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
+    const prompt = `You are a helpful voice assistant. When the call connects, immediately say: Hello, this is Orion calling. How can I help you today? Always speak when you receive any audio.
+
+// FULL PROMPT BELOW — swap back after confirming audio works
+/*
+Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
 
 Vocal Style:
 Tone: Calm, confident, assertive, upbeat, and enthusiastic.
@@ -202,7 +206,8 @@ Final close — strong, upbeat:
 
 "I've got you all set. Chris will be reaching out. Have a great rest of your day, ${firstName}."
 
-(Call book_appointment with day, time_of_day, and notes from qualifier answers.)`;
+(Call book_appointment with day, time_of_day, and notes from qualifier answers.)
+*/`;
 
     inworld.on('open', () => {
       console.log('[INWORLD] WebSocket open — waiting for session.created');
@@ -229,10 +234,7 @@ Final close — strong, upbeat:
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
-                  type: 'semantic_vad',
-                  eagerness: 'medium',
-                  create_response: true,
-                  interrupt_response: true,
+                  type: 'server_vad',
                 },
               },
               output: {
@@ -282,6 +284,7 @@ Final close — strong, upbeat:
         console.log(`[INWORLD] Session updated | VAD: ${vad} | Voice: ${voice}`);
         sessionReady = true;
 
+        // Flush any buffered audio
         if (audioQueue.length > 0) {
           console.log(`[QUEUE] Flushing ${audioQueue.length} buffered audio packets`);
           for (const chunk of audioQueue) {
@@ -293,11 +296,27 @@ Final close — strong, upbeat:
             }
           }
           audioQueue = [];
-
         }
 
-        console.log('[INWORLD] Ready — waiting for caller audio');
+        // TEST: force response immediately to verify audio pipeline end-to-end
+        console.log('[TEST] Forcing response.create to test audio pipeline');
+        inworld.send(JSON.stringify({
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Hello' }]
+          }
+        }));
+        inworld.send(JSON.stringify({
+          type: 'response.create',
+          response: {
+            modalities: ['audio', 'text'],
+            instructions: 'Say exactly: Hello, this is a test. Audio is working.'
+          }
+        }));
 
+        console.log('[INWORLD] Ready — waiting for caller audio');
       }
 
       if (msg.type === 'conversation.item.added' && msg.item?.content) {
@@ -413,6 +432,8 @@ Final close — strong, upbeat:
         if (inworld && inworld.readyState === WebSocket.OPEN) {
           console.log('[COMMIT] Silence detected — committing buffer');
           inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+          inworld.send(JSON.stringify({ type: 'response.create' }));
+          // server_vad handles auto-response but explicit create ensures it fires
         }
       }, 800);
     }
@@ -423,6 +444,7 @@ Final close — strong, upbeat:
       if (silenceTimer) clearTimeout(silenceTimer);
       if (inworld && inworld.readyState === WebSocket.OPEN) {
         inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+        inworld.send(JSON.stringify({ type: 'response.create' }));
       }
       audioQueue = [];
       if (inworld) inworld.close();
