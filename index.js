@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v38 — inbound_track, greeting inject, semantic_vad for turns');
+console.log('[VERSION] Build v39 — semantic_vad + 1.5s fallback commit');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -415,6 +415,20 @@ Final close — strong, upbeat:
       }));
       appendCount++;
       if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
+
+      // Fallback: if semantic_vad doesn't fire, commit after 1.5s silence
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (inworld && inworld.readyState === WebSocket.OPEN) {
+          console.log('[FALLBACK COMMIT] VAD silent — forcing commit + response');
+          inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+          setTimeout(() => {
+            if (inworld && inworld.readyState === WebSocket.OPEN) {
+              inworld.send(JSON.stringify({ type: 'response.create' }));
+            }
+          }, 150);
+        }
+      }, 1500);
 
 
 
