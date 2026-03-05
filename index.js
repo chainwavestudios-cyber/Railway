@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v28 — removed isPlaying gate, always stream audio');
+console.log('[VERSION] Build v29 — lower VAD threshold, peak log after greeting');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -231,9 +231,9 @@ Final close — strong, upbeat:
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
                   type: 'server_vad',
-                  threshold: 0.5,
-                  prefix_padding_ms: 300,
-                  silence_duration_ms: 600,
+                  threshold: 0.3,
+                  prefix_padding_ms: 200,
+                  silence_duration_ms: 400,
                   interrupt_response: true,
                 },
               },
@@ -409,6 +409,14 @@ Final close — strong, upbeat:
         audioQueue.push(pcmBuf);
         return;
       }
+
+      // Temp: log peaks so we can confirm audio reaches Inworld after greeting
+      let peak = 0;
+      for (let i = 0; i < pcmBuf.length; i += 2) {
+        const s = pcmBuf.readInt16LE(i);
+        if (Math.abs(s) > peak) peak = Math.abs(s);
+      }
+      if (peak > 1000) console.log('[POST-GREET PEAK]', peak);
 
       inworld.send(JSON.stringify({
         type: 'input_audio_buffer.append',
