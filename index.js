@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v35 — server_vad only, no manual commits, caller speaks first');
+console.log('[VERSION] Build v37 — both_tracks, filter inbound only');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -74,6 +74,7 @@ wss.on('connection', (browser) => {
   let callActive = false;
   let silenceTimer = null;
   let audioAppended = false;
+  let appendCount = 0;
   let isPlaying = false;
   let leadId = 'unknown';
   let campaignId = 'unknown';
@@ -386,6 +387,7 @@ Final close — strong, upbeat:
     }
 
     if (msg.event === 'media') {
+      if (msg.media.track === 'outbound') return; // skip Orion's own audio
       const mulawBuf = Buffer.from(msg.media.payload, 'base64');
       const pcmBuf = mulawToPcm16_24k(mulawBuf);
 
@@ -398,6 +400,8 @@ Final close — strong, upbeat:
         type: 'input_audio_buffer.append',
         audio: pcmBuf.toString('base64'),
       }));
+      appendCount++;
+      if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
 
 
 
