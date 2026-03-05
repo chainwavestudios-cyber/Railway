@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v41 — wait for committed event before response.create');
+console.log('[VERSION] Build v42 — clear buffer after response.done, server_vad 0.3');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -233,10 +233,10 @@ Final close — strong, upbeat:
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
-                  type: 'semantic_vad',
-                  eagerness: 'high',
-                  create_response: true,
-                  interrupt_response: true,
+                  type: 'server_vad',
+                  threshold: 0.3,
+                  prefix_padding_ms: 300,
+                  silence_duration_ms: 500,
                 },
               },
               output: {
@@ -372,7 +372,15 @@ Final close — strong, upbeat:
       }
 
       if (msg.type === 'response.output_audio.done') { isPlaying = false; }
-      if (msg.type === 'response.done') { console.log('[DONE] Response complete'); isPlaying = false; }
+      if (msg.type === 'response.done') {
+        console.log('[DONE] Response complete');
+        isPlaying = false;
+        // Reset VAD state after each response
+        if (inworld && inworld.readyState === WebSocket.OPEN) {
+          inworld.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
+          console.log('[RESET] Audio buffer cleared for next turn');
+        }
+      }
       if (msg.type === 'error') console.error('[INWORLD ERROR]', JSON.stringify(msg));
     });
 
