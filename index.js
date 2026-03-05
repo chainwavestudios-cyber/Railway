@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v39 — semantic_vad + 1.5s fallback commit');
+console.log('[VERSION] Build v40 — RMS speech detection, commit on real silence');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -416,19 +416,29 @@ Final close — strong, upbeat:
       appendCount++;
       if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
 
-      // Fallback: if semantic_vad doesn't fire, commit after 1.5s silence
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        if (inworld && inworld.readyState === WebSocket.OPEN) {
-          console.log('[FALLBACK COMMIT] VAD silent — forcing commit + response');
-          inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-          setTimeout(() => {
-            if (inworld && inworld.readyState === WebSocket.OPEN) {
-              inworld.send(JSON.stringify({ type: 'response.create' }));
-            }
-          }, 150);
-        }
-      }, 1500);
+      // Measure RMS to detect real speech vs background noise
+      let sum = 0;
+      for (let i = 0; i < pcmBuf.length; i += 2) {
+        const s = pcmBuf.readInt16LE(i);
+        sum += s * s;
+      }
+      const rms = Math.sqrt(sum / (pcmBuf.length / 2));
+
+      // Only reset silence timer on real speech (RMS > 300)
+      if (rms > 300) {
+        if (silenceTimer) clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          if (inworld && inworld.readyState === WebSocket.OPEN) {
+            console.log('[FALLBACK COMMIT] Speech ended — committing');
+            inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+            setTimeout(() => {
+              if (inworld && inworld.readyState === WebSocket.OPEN) {
+                inworld.send(JSON.stringify({ type: 'response.create' }));
+              }
+            }, 150);
+          }
+        }, 1000);
+      }
 
 
 
