@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v53 — allow interruption, flush buffer on Orion speech');
+console.log('[VERSION] Build v55 — acoustic echo cancellation');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -99,6 +99,7 @@ wss.on('connection', (browser) => {
   let appendCount = 0;
   let frameBuffer = [];
   let isPlaying = false;
+  let echoBuffer = Buffer.alloc(0); // reference of what Orion is saying
   let audioAccum = Buffer.alloc(0);
   const ACCUM_TARGET = 9600; // 10 packets = 200ms chunks
   let pendingResponseAfterCommit = false;
@@ -409,9 +410,23 @@ Final close — strong, upbeat:
 
       if (msg.type === 'response.output_audio.delta') {
         isPlaying = true;
-        audioAccum = Buffer.alloc(0); // flush any buffered caller audio to prevent echo
+        audioAccum = Buffer.alloc(0);
+        // Store Orion's PCM output as echo reference for cancellation
+        try {
+          const orionPcm = Buffer.from(msg.delta, 'base64');
+          echoBuffer = Buffer.concat([echoBuffer, orionPcm]);
+          // Keep only last 2 seconds worth
+          if (echoBuffer.length > 24000 * 2 * 2) {
+            echoBuffer = echoBuffer.slice(echoBuffer.length - 24000 * 2 * 2);
+          }
+        } catch(e) {}
       }
-      if (msg.type === 'response.output_audio.done') { isPlaying = false; }
+      if (msg.type === 'response.output_audio.done') {
+        setTimeout(() => {
+          isPlaying = false;
+          echoBuffer = Buffer.alloc(0); // clear echo reference
+        }, 400);
+      }
       if (msg.type === 'response.done') {
         console.log('[DONE] Response complete');
         isPlaying = false;
@@ -467,7 +482,29 @@ Final close — strong, upbeat:
         return;
       }
 
-      audioAccum = Buffer.concat([audioAccum, pcmBuf]);
+      // Echo cancellation: subtract Orion's voice from input
+      let cleanBuf = pcmBuf;
+      if (isPlaying && echoBuffer.length > 0) {
+        cleanBuf = Buffer.allocUnsafe(pcmBuf.length);
+        for (let i = 0; i < pcmBuf.length; i += 2) {
+          const incoming = pcmBuf.readInt16LE(i);
+          // Downsample echo ref index (24k -> 8k -> back up, offset by Twilio latency ~100ms)
+          const echoIdx = Math.min(echoBuffer.length - 2, i * 3);
+          const echo = echoBuffer.readInt16LE(echoIdx - (echoIdx % 2));
+          const cancelled = Math.max(-32768, Math.min(32767, incoming - Math.round(echo * 0.8)));
+          cleanBuf.writeInt16LE(cancelled, i);
+        }
+        // Check if anything is left after cancellation (RMS > 500 = real speech)
+        let sum = 0;
+        for (let i = 0; i < cleanBuf.length; i += 2) {
+          const s = cleanBuf.readInt16LE(i);
+          sum += s * s;
+        }
+        const rms = Math.sqrt(sum / (cleanBuf.length / 2));
+        if (rms < 500) return; // pure echo, skip
+      }
+
+      audioAccum = Buffer.concat([audioAccum, cleanBuf]);
       appendCount++;
 
       if (audioAccum.length >= ACCUM_TARGET) {
