@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v37 — both_tracks, filter inbound only');
+console.log('[VERSION] Build v38 — inbound_track, greeting inject, semantic_vad for turns');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -232,10 +232,10 @@ Final close — strong, upbeat:
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
-                  type: 'server_vad',
-                  threshold: 0.5,
-                  prefix_padding_ms: 300,
-                  silence_duration_ms: 800,
+                  type: 'semantic_vad',
+                  eagerness: 'high',
+                  create_response: true,
+                  interrupt_response: true,
                 },
               },
               output: {
@@ -296,6 +296,18 @@ Final close — strong, upbeat:
           }
           audioQueue = [];
         }
+
+        // Trigger opening greeting
+        setTimeout(() => {
+          if (inworld && inworld.readyState === WebSocket.OPEN) {
+            inworld.send(JSON.stringify({
+              type: 'conversation.item.create',
+              item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }
+            }));
+            inworld.send(JSON.stringify({ type: 'response.create' }));
+            console.log('[GREET] Opening greeting triggered');
+          }
+        }, 500);
 
         console.log('[INWORLD] Ready — waiting for caller audio');
       }
@@ -374,6 +386,7 @@ Final close — strong, upbeat:
     let msg;
     try { msg = JSON.parse(message.toString()); } catch { return; }
     if (msg.event !== 'media') console.log('[TWILIO]', msg.event);
+    if (msg.event === 'media' && msg.media?.track) { /* track ok */ }
 
     if (msg.event === 'start') {
       streamSid = msg.start.streamSid;
