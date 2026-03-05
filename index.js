@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v26 — auto-greet on connect, semantic_vad for turns');
+console.log('[VERSION] Build v27 — suppress input while Orion speaking');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -73,6 +73,7 @@ wss.on('connection', (browser) => {
   let audioQueue = [];
   let callActive = false;
   let silenceTimer = null;
+  let isPlaying = false;
   let leadId = 'unknown';
   let campaignId = 'unknown';
   let email = '';
@@ -229,10 +230,10 @@ Final close — strong, upbeat:
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
-                  type: 'semantic_vad',
-                  eagerness: 'high',
-                  create_response: true,
-                  interrupt_response: true,
+                  type: 'server_vad',
+                  threshold: 0.5,
+                  prefix_padding_ms: 300,
+                  silence_duration_ms: 600,
                 },
               },
               output: {
@@ -271,8 +272,6 @@ Final close — strong, upbeat:
             temperature: 0.8,
           },
         };
-        console.log('[WS STATE BEFORE UPDATE]', inworld.readyState);
-        console.log('[SESSION PAYLOAD]', JSON.stringify(sessionPayload, null, 0));
         inworld.send(JSON.stringify(sessionPayload));
       }
 
@@ -365,7 +364,8 @@ Final close — strong, upbeat:
         }
       }
 
-      if (msg.type === 'response.done') { console.log('[DONE] Response complete'); }
+      if (msg.type === 'response.output_audio.done') { isPlaying = false; }
+      if (msg.type === 'response.done') { console.log('[DONE] Response complete'); isPlaying = false; }
       if (msg.type === 'error') console.error('[INWORLD ERROR]', JSON.stringify(msg));
     });
 
@@ -409,19 +409,12 @@ Final close — strong, upbeat:
         return;
       }
 
-      // Peak diagnostic — remove once confirmed
-      let peak = 0;
-      for (let i = 0; i < pcmBuf.length; i += 2) {
-        const sample = pcmBuf.readInt16LE(i);
-        const abs = Math.abs(sample);
-        if (abs > peak) peak = abs;
+      if (!isPlaying) {
+        inworld.send(JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: pcmBuf.toString('base64'),
+        }));
       }
-      if (peak > 500) console.log('[AUDIO PEAK]', peak);
-
-      inworld.send(JSON.stringify({
-        type: 'input_audio_buffer.append',
-        audio: pcmBuf.toString('base64'),
-      }));
 
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
