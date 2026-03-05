@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v42 — clear buffer after response.done, server_vad 0.3');
+console.log('[VERSION] Build v43 — server_vad only, no manual commits, buffer clear after response');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -433,25 +433,7 @@ Final close — strong, upbeat:
       appendCount++;
       if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
 
-      // Measure RMS to detect real speech vs background noise
-      let sum = 0;
-      for (let i = 0; i < pcmBuf.length; i += 2) {
-        const s = pcmBuf.readInt16LE(i);
-        sum += s * s;
-      }
-      const rms = Math.sqrt(sum / (pcmBuf.length / 2));
 
-      // Only reset silence timer on real speech (RMS > 300)
-      if (rms > 300) {
-        if (silenceTimer) clearTimeout(silenceTimer);
-        silenceTimer = setTimeout(() => {
-          if (inworld && inworld.readyState === WebSocket.OPEN) {
-            console.log('[FALLBACK COMMIT] Speech ended — committing');
-            pendingResponseAfterCommit = true;
-            inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-          }
-        }, 1000);
-      }
 
 
 
