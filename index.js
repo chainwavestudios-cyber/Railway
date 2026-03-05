@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v46 — packet diagnostic');
+console.log('[VERSION] Build v47 — server_vad + echo cancellation while playing');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -233,10 +233,10 @@ Final close — strong, upbeat:
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
-                  type: 'semantic_vad',
-                  eagerness: 'medium',
-                  create_response: true,
-                  interrupt_response: true,
+                  type: 'server_vad',
+                  threshold: 0.3,
+                  prefix_padding_ms: 300,
+                  silence_duration_ms: 500,
                 },
               },
               output: {
@@ -371,6 +371,7 @@ Final close — strong, upbeat:
         }
       }
 
+      if (msg.type === 'response.output_audio.delta') { isPlaying = true; }
       if (msg.type === 'response.output_audio.done') { isPlaying = false; }
       if (msg.type === 'response.done') {
         console.log('[DONE] Response complete');
@@ -425,6 +426,9 @@ Final close — strong, upbeat:
         audioQueue.push(pcmBuf);
         return;
       }
+
+      // Echo cancellation: don't send audio to Inworld while Orion is speaking
+      if (isPlaying) return;
 
       const audioB64 = pcmBuf.toString('base64');
       inworld.send(JSON.stringify({
