@@ -12,79 +12,72 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v55 — acoustic echo cancellation');
+console.log('[VERSION] Build v57 — Inworld official conversion code, 100ms chunks');
 
-// ─── G.711 mulaw decode table ────────────────────────────────────────────────
-const MULAW_DECODE = new Int16Array(256);
-(function buildMulawTable() {
-  for (let i = 0; i < 256; i++) {
-    let ulaw = ~i & 0xFF;
-    const sign = ulaw & 0x80;
-    const exp  = (ulaw >> 4) & 0x07;
-    const mant = ulaw & 0x0F;
-    let sample = ((mant << 3) + 0x84) << exp;
-    sample -= 0x84;
-    MULAW_DECODE[i] = sign ? -sample : sample;
-  }
-})();
+// ─── Audio conversion utils (from Inworld support) ──────────────────────────
 
-function mulawToPcm16_24k(mulawBuf) {
-  // Decode mulaw to PCM16 at 8kHz
-  const len = mulawBuf.length;
-  const pcm8k = new Int16Array(len);
-  for (let i = 0; i < len; i++) {
-    pcm8k[i] = MULAW_DECODE[mulawBuf[i]];
-  }
-
-  // Upsample 8kHz -> 24kHz using cubic interpolation (much better quality than linear)
-  const outLen = len * 3;
-  const out = Buffer.allocUnsafe(outLen * 2);
-
-  for (let i = 0; i < outLen; i++) {
-    const srcPos = i / 3;
-    const srcIdx = Math.floor(srcPos);
-    const t = srcPos - srcIdx;
-
-    // Catmull-Rom cubic interpolation
-    const p0 = pcm8k[Math.max(0, srcIdx - 1)];
-    const p1 = pcm8k[Math.min(len - 1, srcIdx)];
-    const p2 = pcm8k[Math.min(len - 1, srcIdx + 1)];
-    const p3 = pcm8k[Math.min(len - 1, srcIdx + 2)];
-
-    const a = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
-    const b = p0 - 2.5 * p1 + 2 * p2 - 0.5 * p3;
-    const cc = -0.5 * p0 + 0.5 * p2;
-    const d = p1;
-
-    const sample = a * t * t * t + b * t * t + cc * t + d;
-    out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sample))), i * 2);
-  }
-
-  return out;
+function mulawDecode(mulawByte) {
+  const BIAS = 0x84;
+  const mulawByteInverted = ~mulawByte;
+  const sign = mulawByteInverted & 0x80;
+  const exponent = (mulawByteInverted >> 4) & 0x07;
+  const mantissa = mulawByteInverted & 0x0f;
+  let magnitude = ((mantissa << 3) | BIAS) << (exponent - 1);
+  return sign ? magnitude : -magnitude;
 }
 
-function encodeMulaw(sample) {
-  const MU = 255;
-  const sign = sample < 0 ? 0x80 : 0x00;
-  if (sample < 0) sample = -sample;
-  if (sample > 32767) sample = 32767;
-  sample = Math.round(Math.log(1 + MU * sample / 32767) / Math.log(1 + MU) * 127);
-  return (~(sign | sample)) & 0xFF;
+function mulawEncode(pcmSample) {
+  const BIAS = 0x84;
+  const MAX = 32635;
+  let sign = (pcmSample >> 8) & 0x80;
+  if (sign) pcmSample = -pcmSample;
+  if (pcmSample > MAX) pcmSample = MAX;
+  pcmSample = pcmSample + BIAS;
+  let exponent = 7;
+  for (let expMask = 0x4000; (pcmSample & expMask) === 0; expMask >>= 1) {
+    exponent--;
+  }
+  const mantissa = (pcmSample >> (exponent + 3)) & 0x0f;
+  return (~(sign | (exponent << 4) | mantissa)) & 0xff;
 }
 
-function pcm16_24kToMulaw(pcmBuf) {
-  const numSamples = Math.floor(pcmBuf.length / 2);
-  const outLen = Math.floor(numSamples / 3);
-  const out = Buffer.allocUnsafe(outLen);
-  for (let i = 0; i < outLen; i++) {
-    // Average 3 samples when downsampling to reduce aliasing
-    const s0 = pcmBuf.readInt16LE(i * 6);
-    const s1 = (i * 6 + 2 < pcmBuf.length) ? pcmBuf.readInt16LE(i * 6 + 2) : s0;
-    const s2 = (i * 6 + 4 < pcmBuf.length) ? pcmBuf.readInt16LE(i * 6 + 4) : s0;
-    const sample = Math.round((s0 + s1 + s2) / 3);
-    out[i] = encodeMulaw(Math.max(-32768, Math.min(32767, sample)));
+function resampleLinear(buffer, fromRate, toRate) {
+  if (fromRate === toRate) return buffer;
+  const inputSamples = buffer.length / 2;
+  const outputSamples = Math.floor((inputSamples * toRate) / fromRate);
+  const output = Buffer.alloc(outputSamples * 2);
+  const ratio = fromRate / toRate;
+  for (let i = 0; i < outputSamples; i++) {
+    const srcIndex = i * ratio;
+    const srcIndexFloor = Math.floor(srcIndex);
+    const srcIndexCeil = Math.min(srcIndexFloor + 1, inputSamples - 1);
+    const fraction = srcIndex - srcIndexFloor;
+    const sample1 = buffer.readInt16LE(srcIndexFloor * 2);
+    const sample2 = buffer.readInt16LE(srcIndexCeil * 2);
+    const interpolated = Math.round(sample1 + (sample2 - sample1) * fraction);
+    output.writeInt16LE(interpolated, i * 2);
   }
-  return out;
+  return output;
+}
+
+function twilioToInworld(base64Mulaw) {
+  const mulawBuffer = Buffer.from(base64Mulaw, 'base64');
+  const pcm8k = Buffer.alloc(mulawBuffer.length * 2);
+  for (let i = 0; i < mulawBuffer.length; i++) {
+    pcm8k.writeInt16LE(mulawDecode(mulawBuffer[i]), i * 2);
+  }
+  const pcm24k = resampleLinear(pcm8k, 8000, 24000);
+  return pcm24k.toString('base64');
+}
+
+function inworldToTwilio(base64Pcm) {
+  const pcm24k = Buffer.from(base64Pcm, 'base64');
+  const pcm8k = resampleLinear(pcm24k, 24000, 8000);
+  const mulaw = Buffer.alloc(pcm8k.length / 2);
+  for (let i = 0; i < pcm8k.length; i += 2) {
+    mulaw[i / 2] = mulawEncode(pcm8k.readInt16LE(i));
+  }
+  return mulaw.toString('base64');
 }
 
 wss.on('connection', (browser) => {
@@ -101,7 +94,7 @@ wss.on('connection', (browser) => {
   let isPlaying = false;
   let echoBuffer = Buffer.alloc(0); // reference of what Orion is saying
   let audioAccum = Buffer.alloc(0);
-  const ACCUM_TARGET = 9600; // 10 packets = 200ms chunks
+  const ACCUM_TARGET = 4800; // 5 packets = 100ms chunks (Inworld recommended)
   let pendingResponseAfterCommit = false;
   let leadId = 'unknown';
   let campaignId = 'unknown';
@@ -257,7 +250,7 @@ Final close — strong, upbeat:
             instructions: prompt,
             audio: {
               input: {
-                format: { type: 'audio/pcm', rate: 24000 },
+                format: { type: 'audio/pcmu', rate: 8000 },
                 turn_detection: {
                   type: 'server_vad',
                   threshold: 0.3,
@@ -268,7 +261,7 @@ Final close — strong, upbeat:
               output: {
                 voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
                 model: 'inworld-tts-1.5-max',
-                format: { type: 'audio/pcm', rate: 24000 },
+                format: { type: 'audio/pcmu', rate: 8000 },
               },
             },
             tools: [
@@ -348,9 +341,8 @@ Final close — strong, upbeat:
       if (msg.type === 'response.output_audio.delta' && msg.delta) {
         if (browser.readyState === WebSocket.OPEN && streamSid) {
           try {
-            const pcmBuf = Buffer.from(msg.delta, 'base64');
-            const mulawBuf = pcm16_24kToMulaw(pcmBuf);
-            // Send in 160-byte chunks (8kHz * 20ms = 160 bytes = 1 Twilio frame)
+            const mulawB64 = inworldToTwilio(msg.delta);
+            const mulawBuf = Buffer.from(mulawB64, 'base64');
             for (let i = 0; i < mulawBuf.length; i += 160) {
               const chunk = mulawBuf.slice(i, i + 160);
               browser.send(JSON.stringify({
@@ -474,8 +466,7 @@ Final close — strong, upbeat:
 
     if (msg.event === 'media') {
       if (msg.media.track === 'outbound') return; // skip Orion's own audio
-      const mulawBuf = Buffer.from(msg.media.payload, 'base64');
-      const pcmBuf = mulawToPcm16_24k(mulawBuf);
+      const pcmBuf = Buffer.from(twilioToInworld(msg.media.payload), 'base64');
 
       if (!sessionReady || !inworld || inworld.readyState !== WebSocket.OPEN) {
         audioQueue.push(pcmBuf);
@@ -504,7 +495,7 @@ Final close — strong, upbeat:
         if (rms < 500) return; // pure echo, skip
       }
 
-      audioAccum = Buffer.concat([audioAccum, cleanBuf]);
+      audioAccum = Buffer.concat([audioAccum, pcmBuf]);
       appendCount++;
 
       if (audioAccum.length >= ACCUM_TARGET) {
