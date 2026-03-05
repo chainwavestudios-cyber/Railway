@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v32 — commit only, no manual response.create');
+console.log('[VERSION] Build v35 — server_vad only, no manual commits, caller speaks first');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -73,6 +73,7 @@ wss.on('connection', (browser) => {
   let audioQueue = [];
   let callActive = false;
   let silenceTimer = null;
+  let audioAppended = false;
   let isPlaying = false;
   let leadId = 'unknown';
   let campaignId = 'unknown';
@@ -229,7 +230,12 @@ Final close — strong, upbeat:
             audio: {
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
-                turn_detection: null,
+                turn_detection: {
+                  type: 'server_vad',
+                  threshold: 0.5,
+                  prefix_padding_ms: 300,
+                  silence_duration_ms: 800,
+                },
               },
               output: {
                 voice: 'Dennis',
@@ -289,22 +295,6 @@ Final close — strong, upbeat:
           }
           audioQueue = [];
         }
-
-        // Greet immediately — VAD will handle subsequent turns
-        setTimeout(() => {
-          if (inworld && inworld.readyState === WebSocket.OPEN) {
-            inworld.send(JSON.stringify({
-              type: 'conversation.item.create',
-              item: {
-                type: 'message',
-                role: 'user',
-                content: [{ type: 'input_text', text: 'hello' }]
-              }
-            }));
-            inworld.send(JSON.stringify({ type: 'response.create' }));
-            console.log('[GREET] Initial response triggered');
-          }
-        }, 500);
 
         console.log('[INWORLD] Ready — waiting for caller audio');
       }
@@ -404,26 +394,11 @@ Final close — strong, upbeat:
         return;
       }
 
-      // Temp: log peaks so we can confirm audio reaches Inworld after greeting
-      let peak = 0;
-      for (let i = 0; i < pcmBuf.length; i += 2) {
-        const s = pcmBuf.readInt16LE(i);
-        if (Math.abs(s) > peak) peak = Math.abs(s);
-      }
-      if (peak > 1000) console.log('[POST-GREET PEAK]', peak);
-
       inworld.send(JSON.stringify({
         type: 'input_audio_buffer.append',
         audio: pcmBuf.toString('base64'),
       }));
 
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        if (inworld && inworld.readyState === WebSocket.OPEN) {
-          console.log('[COMMIT] Silence — committing buffer');
-          inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-        }
-      }, 1000);
 
 
     }
