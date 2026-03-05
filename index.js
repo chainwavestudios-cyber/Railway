@@ -12,6 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
+console.log('[VERSION] Build v10 — no assemblySettings, clean payload');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -219,17 +220,16 @@ Final close — strong, upbeat:
         reconnectAttempts = 0;
         console.log('[INWORLD] Session created — sending config');
 
-        inworld.send(JSON.stringify({
+        const sessionPayload = {
           type: 'session.update',
           session: {
             type: 'realtime',
-            model: 'inworld-realtime-1',
+            model: 'inworld-voice-1',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
             audio: {
               input: {
                 format: { type: 'audio/pcm', rate: 24000 },
-                assemblySettings: { endOfTurnConfidenceThreshold: 0.5 },
                 turn_detection: {
                   type: 'semantic_vad',
                   eagerness: 'very_high',
@@ -274,7 +274,9 @@ Final close — strong, upbeat:
             ],
             temperature: 0.8,
           },
-        }));
+        };
+        console.log('[DEBUG PAYLOAD] assemblySettings:', JSON.stringify(sessionPayload.session?.assemblySettings));
+        inworld.send(JSON.stringify(sessionPayload));
       }
 
       if (msg.type === 'session.updated') {
