@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v48 — 200ms chunk batching for VAD');
+console.log('[VERSION] Build v52 — custom Chris voice');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -29,19 +29,37 @@ const MULAW_DECODE = new Int16Array(256);
 })();
 
 function mulawToPcm16_24k(mulawBuf) {
+  // Decode mulaw to PCM16 at 8kHz
   const len = mulawBuf.length;
-  const out = Buffer.allocUnsafe(len * 3 * 2);
-  let outPos = 0;
-  let prev = 0;
+  const pcm8k = new Int16Array(len);
   for (let i = 0; i < len; i++) {
-    const curr = MULAW_DECODE[mulawBuf[i]];
-    for (let j = 0; j < 3; j++) {
-      const s = Math.round(prev + (curr - prev) * ((j + 1) / 3));
-      out.writeInt16LE(Math.max(-32768, Math.min(32767, s)), outPos);
-      outPos += 2;
-    }
-    prev = curr;
+    pcm8k[i] = MULAW_DECODE[mulawBuf[i]];
   }
+
+  // Upsample 8kHz -> 24kHz using cubic interpolation (much better quality than linear)
+  const outLen = len * 3;
+  const out = Buffer.allocUnsafe(outLen * 2);
+
+  for (let i = 0; i < outLen; i++) {
+    const srcPos = i / 3;
+    const srcIdx = Math.floor(srcPos);
+    const t = srcPos - srcIdx;
+
+    // Catmull-Rom cubic interpolation
+    const p0 = pcm8k[Math.max(0, srcIdx - 1)];
+    const p1 = pcm8k[Math.min(len - 1, srcIdx)];
+    const p2 = pcm8k[Math.min(len - 1, srcIdx + 1)];
+    const p3 = pcm8k[Math.min(len - 1, srcIdx + 2)];
+
+    const a = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
+    const b = p0 - 2.5 * p1 + 2 * p2 - 0.5 * p3;
+    const cc = -0.5 * p0 + 0.5 * p2;
+    const d = p1;
+
+    const sample = a * t * t * t + b * t * t + cc * t + d;
+    out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sample))), i * 2);
+  }
+
   return out;
 }
 
@@ -59,8 +77,12 @@ function pcm16_24kToMulaw(pcmBuf) {
   const outLen = Math.floor(numSamples / 3);
   const out = Buffer.allocUnsafe(outLen);
   for (let i = 0; i < outLen; i++) {
-    const sample = pcmBuf.readInt16LE(i * 6);
-    out[i] = encodeMulaw(sample);
+    // Average 3 samples when downsampling to reduce aliasing
+    const s0 = pcmBuf.readInt16LE(i * 6);
+    const s1 = (i * 6 + 2 < pcmBuf.length) ? pcmBuf.readInt16LE(i * 6 + 2) : s0;
+    const s2 = (i * 6 + 4 < pcmBuf.length) ? pcmBuf.readInt16LE(i * 6 + 4) : s0;
+    const sample = Math.round((s0 + s1 + s2) / 3);
+    out[i] = encodeMulaw(Math.max(-32768, Math.min(32767, sample)));
   }
   return out;
 }
@@ -243,7 +265,8 @@ Final close — strong, upbeat:
                 },
               },
               output: {
-                voice: 'Dennis',
+                voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
+                model: 'inworld-tts-1.5-max',
                 format: { type: 'audio/pcm', rate: 24000 },
               },
             },
@@ -454,7 +477,7 @@ Final close — strong, upbeat:
           audio: audioB64,
         }));
         audioAccum = Buffer.alloc(0);
-        if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
+
       }
 
 
