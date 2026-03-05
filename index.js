@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v17 — model not modelId');
+console.log('[VERSION] Build v21 — key param restored');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -83,7 +83,7 @@ wss.on('connection', (browser) => {
   function connectInworld(firstName = 'friend') {
     console.log('[INWORLD] Connecting | session:', streamSid);
 
-    const key = process.env.INWORLD_API_KEY;
+    const key = 'YWF2QmVkNTE2ZzlTamFpUERHaHBna3pIa09yY0VEazI6aElUZkhQM0x0aWE3ZDFMcmpKdzdndVJKZ3lLQTlPYzZyNVY5ZzRMcTUxOU9Zbm5ydmh2T2FVMFpodkpuTFBlcw==';
 
     inworld = new WebSocket(
       `wss://api.inworld.ai/api/v1/realtime/session?key=voice-${Date.now()}&protocol=realtime`,
@@ -222,7 +222,7 @@ Final close — strong, upbeat:
         const sessionPayload = {
           type: 'session.update',
           session: {
-            model: 'openai/gpt-4o-mini',
+            model: 'gpt-4o-mini',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
             audio: {
@@ -271,6 +271,7 @@ Final close — strong, upbeat:
             temperature: 0.8,
           },
         };
+        console.log('[WS STATE BEFORE UPDATE]', inworld.readyState);
         console.log('[SESSION PAYLOAD]', JSON.stringify(sessionPayload, null, 0));
         inworld.send(JSON.stringify(sessionPayload));
       }
