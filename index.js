@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v52 — custom Chris voice');
+console.log('[VERSION] Build v53 — allow interruption, flush buffer on Orion speech');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -407,7 +407,10 @@ Final close — strong, upbeat:
         console.log('[STT]', msg.transcript);
       }
 
-      if (msg.type === 'response.output_audio.delta') { isPlaying = true; }
+      if (msg.type === 'response.output_audio.delta') {
+        isPlaying = true;
+        audioAccum = Buffer.alloc(0); // flush any buffered caller audio to prevent echo
+      }
       if (msg.type === 'response.output_audio.done') { isPlaying = false; }
       if (msg.type === 'response.done') {
         console.log('[DONE] Response complete');
@@ -463,9 +466,6 @@ Final close — strong, upbeat:
         audioQueue.push(pcmBuf);
         return;
       }
-
-      // Echo cancellation: don't send audio to Inworld while Orion is speaking
-      if (isPlaying) return;
 
       audioAccum = Buffer.concat([audioAccum, pcmBuf]);
       appendCount++;
