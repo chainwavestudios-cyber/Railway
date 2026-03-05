@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v10 — no assemblySettings, clean payload');
+console.log('[VERSION] Build v15 — Basic auth, legacy endpoint, modern payload');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -83,8 +83,7 @@ wss.on('connection', (browser) => {
   function connectInworld(firstName = 'friend') {
     console.log('[INWORLD] Connecting | session:', streamSid);
 
-    const key = 'YWF2QmVkNTE2ZzlTamFpUERHaHBna3pIa09yY0VEazI6aElUZkhQM0x0aWE3ZDFMcmpKdzdndVJKZ3lLQTlPYzZyNVY5ZzRMcTUxOU9Zbm5ydmh2T2FVMFpodkpuTFBlcw==';
-
+    const key = process.env.INWORLD_API_KEY;
 
     inworld = new WebSocket(
       `wss://api.inworld.ai/api/v1/realtime/session?key=voice-${Date.now()}&protocol=realtime`,
@@ -223,8 +222,7 @@ Final close — strong, upbeat:
         const sessionPayload = {
           type: 'session.update',
           session: {
-            type: 'realtime',
-            model: 'inworld-voice-1',
+            modelId: 'openai/gpt-4o-mini',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
             audio: {
@@ -232,16 +230,14 @@ Final close — strong, upbeat:
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
                   type: 'semantic_vad',
-                  eagerness: 'very_high',
+                  eagerness: 'medium',
                   create_response: true,
                   interrupt_response: true,
                 },
               },
               output: {
-                format: { type: 'audio/pcm', rate: 24000 },
                 voice: 'Dennis',
-                model: 'inworld-tts-1.5-mini',
-                speed: 1.0,
+                format: { type: 'audio/pcm', rate: 24000 },
               },
             },
             tools: [
@@ -275,7 +271,6 @@ Final close — strong, upbeat:
             temperature: 0.8,
           },
         };
-        console.log('[DEBUG PAYLOAD] assemblySettings:', JSON.stringify(sessionPayload.session?.assemblySettings));
         inworld.send(JSON.stringify(sessionPayload));
       }
 
