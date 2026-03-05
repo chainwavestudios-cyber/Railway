@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v29 — lower VAD threshold, peak log after greeting');
+console.log('[VERSION] Build v30 — removed silence timer, VAD threshold 0.1');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -231,9 +231,8 @@ Final close — strong, upbeat:
                 format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
                   type: 'server_vad',
-                  threshold: 0.3,
-                  prefix_padding_ms: 200,
-                  silence_duration_ms: 400,
+                  threshold: 0.1,
+                  silence_duration_ms: 300,
                   interrupt_response: true,
                 },
               },
@@ -423,15 +422,7 @@ Final close — strong, upbeat:
         audio: pcmBuf.toString('base64'),
       }));
 
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        if (inworld && inworld.readyState === WebSocket.OPEN) {
-          console.log('[COMMIT] Silence detected — committing buffer');
-          inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-          inworld.send(JSON.stringify({ type: 'response.create' }));
-          // server_vad handles auto-response but explicit create ensures it fires
-        }
-      }, 800);
+
     }
 
     if (msg.event === 'stop') {
