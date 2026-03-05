@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v27 — suppress input while Orion speaking');
+console.log('[VERSION] Build v28 — removed isPlaying gate, always stream audio');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -234,6 +234,7 @@ Final close — strong, upbeat:
                   threshold: 0.5,
                   prefix_padding_ms: 300,
                   silence_duration_ms: 600,
+                  interrupt_response: true,
                 },
               },
               output: {
@@ -409,12 +410,10 @@ Final close — strong, upbeat:
         return;
       }
 
-      if (!isPlaying) {
-        inworld.send(JSON.stringify({
-          type: 'input_audio_buffer.append',
-          audio: pcmBuf.toString('base64'),
-        }));
-      }
+      inworld.send(JSON.stringify({
+        type: 'input_audio_buffer.append',
+        audio: pcmBuf.toString('base64'),
+      }));
 
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
