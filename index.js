@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v47 — server_vad + echo cancellation while playing');
+console.log('[VERSION] Build v48 — 200ms chunk batching for VAD');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -75,7 +75,10 @@ wss.on('connection', (browser) => {
   let silenceTimer = null;
   let audioAppended = false;
   let appendCount = 0;
+  let frameBuffer = [];
   let isPlaying = false;
+  let audioAccum = Buffer.alloc(0);
+  const ACCUM_TARGET = 9600; // 10 packets = 200ms chunks
   let pendingResponseAfterCommit = false;
   let leadId = 'unknown';
   let campaignId = 'unknown';
@@ -371,6 +374,16 @@ Final close — strong, upbeat:
         }
       }
 
+      if (msg.type === 'input_audio_buffer.speech_started') {
+        console.log('[VAD] Speech started detected!');
+      }
+      if (msg.type === 'input_audio_buffer.speech_stopped') {
+        console.log('[VAD] Speech stopped detected!');
+      }
+      if (msg.type === 'conversation.item.input_audio_transcription.completed') {
+        console.log('[STT]', msg.transcript);
+      }
+
       if (msg.type === 'response.output_audio.delta') { isPlaying = true; }
       if (msg.type === 'response.output_audio.done') { isPlaying = false; }
       if (msg.type === 'response.done') {
@@ -380,6 +393,7 @@ Final close — strong, upbeat:
         if (inworld && inworld.readyState === WebSocket.OPEN) {
           inworld.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
           console.log('[RESET] Audio buffer cleared for next turn');
+          audioAccum = Buffer.alloc(0);
         }
       }
       if (msg.type === 'error') console.error('[INWORLD ERROR]', JSON.stringify(msg));
@@ -430,15 +444,17 @@ Final close — strong, upbeat:
       // Echo cancellation: don't send audio to Inworld while Orion is speaking
       if (isPlaying) return;
 
-      const audioB64 = pcmBuf.toString('base64');
-      inworld.send(JSON.stringify({
-        type: 'input_audio_buffer.append',
-        audio: audioB64,
-      }));
+      audioAccum = Buffer.concat([audioAccum, pcmBuf]);
       appendCount++;
-      if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
-      if (appendCount === 1) {
-        console.log('[DIAG] First packet — mulaw bytes:', mulawBuf.length, '| pcm bytes:', pcmBuf.length, '| b64 length:', audioB64.length, '| first 4 pcm bytes (hex):', pcmBuf.slice(0,4).toString('hex'));
+
+      if (audioAccum.length >= ACCUM_TARGET) {
+        const audioB64 = audioAccum.toString('base64');
+        inworld.send(JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: audioB64,
+        }));
+        audioAccum = Buffer.alloc(0);
+        if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
       }
 
 
