@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v25 — full Orion prompt, semantic_vad, live');
+console.log('[VERSION] Build v26 — auto-greet on connect, semantic_vad for turns');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -295,6 +295,22 @@ Final close — strong, upbeat:
           }
           audioQueue = [];
         }
+
+        // Greet immediately — VAD will handle subsequent turns
+        setTimeout(() => {
+          if (inworld && inworld.readyState === WebSocket.OPEN) {
+            inworld.send(JSON.stringify({
+              type: 'conversation.item.create',
+              item: {
+                type: 'message',
+                role: 'user',
+                content: [{ type: 'input_text', text: 'hello' }]
+              }
+            }));
+            inworld.send(JSON.stringify({ type: 'response.create' }));
+            console.log('[GREET] Initial response triggered');
+          }
+        }, 500);
 
         console.log('[INWORLD] Ready — waiting for caller audio');
       }
