@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v58 — fix mulawDecode exponent=0, fix queue flush');
+console.log('[VERSION] Build v60 — gate debug logging');
 
 // ─── Audio conversion utils (from Inworld support) ──────────────────────────
 
@@ -478,27 +478,12 @@ Final close — strong, upbeat:
         return;
       }
 
-      // Echo cancellation: subtract Orion's voice from input
-      let cleanBuf = pcmBuf;
-      if (isPlaying && echoBuffer.length > 0) {
-        cleanBuf = Buffer.allocUnsafe(pcmBuf.length);
-        for (let i = 0; i < pcmBuf.length; i += 2) {
-          const incoming = pcmBuf.readInt16LE(i);
-          // Downsample echo ref index (24k -> 8k -> back up, offset by Twilio latency ~100ms)
-          const echoIdx = Math.min(echoBuffer.length - 2, i * 3);
-          const echo = echoBuffer.readInt16LE(echoIdx - (echoIdx % 2));
-          const cancelled = Math.max(-32768, Math.min(32767, incoming - Math.round(echo * 0.8)));
-          cleanBuf.writeInt16LE(cancelled, i);
-        }
-        // Check if anything is left after cancellation (RMS > 500 = real speech)
-        let sum = 0;
-        for (let i = 0; i < cleanBuf.length; i += 2) {
-          const s = cleanBuf.readInt16LE(i);
-          sum += s * s;
-        }
-        const rms = Math.sqrt(sum / (cleanBuf.length / 2));
-        if (rms < 500) return; // pure echo, skip
+      // Block input while Orion is speaking to prevent echo
+      if (isPlaying) {
+        console.log('[GATE] Blocking audio — isPlaying true');
+        return;
       }
+      console.log('[GATE] Audio flowing — isPlaying false');
 
       audioAccum = Buffer.concat([audioAccum, pcmBuf]);
       appendCount++;
