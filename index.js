@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v31 — VAD null, manual commit+response after 1s silence');
+console.log('[VERSION] Build v32 — commit only, no manual response.create');
 
 // ─── G.711 mulaw decode table ────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -420,9 +420,8 @@ Final close — strong, upbeat:
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
         if (inworld && inworld.readyState === WebSocket.OPEN) {
-          console.log('[COMMIT] Silence — committing + response.create');
+          console.log('[COMMIT] Silence — committing buffer');
           inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-          inworld.send(JSON.stringify({ type: 'response.create' }));
         }
       }, 1000);
 
@@ -435,7 +434,6 @@ Final close — strong, upbeat:
       if (silenceTimer) clearTimeout(silenceTimer);
       if (inworld && inworld.readyState === WebSocket.OPEN) {
         inworld.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-        inworld.send(JSON.stringify({ type: 'response.create' }));
       }
       audioQueue = [];
       if (inworld) inworld.close();
