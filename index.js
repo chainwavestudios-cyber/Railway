@@ -113,7 +113,7 @@ PHASE 4 - QUALIFY
 (Wait)
 "Got it... and what did you buy... gold, silver, or platinum?"
 (Wait)
-"And in terms of timing... if something made sense to you and everything checked out... are you in a liquid position to make an investment? We also specialize in placing metals in tax-sheltered vehicles... like retirement accounts."
+"And in terms of timing... if something made sense to you and everything checked out... are you in a liquid position to make an investment? We also specialize in placing metals in tax-sheltered qualified retirement accounts."
 (Wait)
 
 PHASE 5 - CLOSE
