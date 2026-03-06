@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v64 — fix format mismatch pcm 24k everywhere');
+console.log('[VERSION] Build v65 — gpt-4o-mini, pcm 24k');
 
 // ─── Audio conversion ────────────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -239,7 +239,7 @@ Final close — strong, upbeat:
         const sessionPayload = {
           type: 'session.update',
           session: {
-            model: 'gemini-2.5-flash',
+            model: 'gpt-4o-mini',
             output_modalities: ['audio', 'text'],
             instructions: prompt,
             audio: {
