@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v62 — back to cubic interpolation that worked');
+console.log('[VERSION] Build v64 — fix format mismatch pcm 24k everywhere');
 
 // ─── Audio conversion ────────────────────────────────────────────────────────
 const MULAW_DECODE = new Int16Array(256);
@@ -244,7 +244,7 @@ Final close — strong, upbeat:
             instructions: prompt,
             audio: {
               input: {
-                format: { type: 'audio/pcmu', rate: 8000 },
+                format: { type: 'audio/pcm', rate: 24000 },
                 turn_detection: {
                   type: 'server_vad',
                   threshold: 0.3,
@@ -255,7 +255,7 @@ Final close — strong, upbeat:
               output: {
                 voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
                 model: 'inworld-tts-1.5-max',
-                format: { type: 'audio/pcmu', rate: 8000 },
+                format: { type: 'audio/pcm', rate: 24000 },
               },
             },
             tools: [
@@ -475,20 +475,12 @@ Final close — strong, upbeat:
       if (isPlaying) return;
       // console.log('[GATE] Audio flowing — isPlaying false'); // too noisy
 
-      if (appendCount === 0) console.log('[FIRST PACKET] pcmBuf size:', pcmBuf.length);
-      audioAccum = Buffer.concat([audioAccum, pcmBuf]);
       appendCount++;
-      if (appendCount % 10 === 0) console.log('[ACCUM] packets:', appendCount, 'accum size:', audioAccum.length, 'target:', ACCUM_TARGET);
-
-      if (audioAccum.length >= ACCUM_TARGET) {
-        const audioB64 = audioAccum.toString('base64');
-        inworld.send(JSON.stringify({
-          type: 'input_audio_buffer.append',
-          audio: audioB64,
-        }));
-        audioAccum = Buffer.alloc(0);
-        console.log('[AUDIO] Sent chunk to Inworld');
-      }
+      if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
+      inworld.send(JSON.stringify({
+        type: 'input_audio_buffer.append',
+        audio: pcmBuf.toString('base64'),
+      }));
 
 
 
