@@ -1,102 +1,55 @@
 import express from 'express';
 import http from 'http';
-import WebSocket, { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
+import url from 'url';
 import fetch from 'node-fetch';
 
-const PORT = process.env.PORT || 8080;
 const app = express();
-app.get('/health', (_, res) => res.send('OK'));
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-console.log('[START] Orion Engine Running on Port', PORT);
-console.log('[VERSION] Build v66 — clean rebuild from working state');
+console.log('[START] Orion Engine Running');
+console.log('[VERSION] Build v1 — Deepgram STT + gpt-4o-mini + Cartesia TTS');
 
-// ─── mulaw <-> PCM16 24kHz ────────────────────────────────────────────────────
-const MULAW_DECODE = new Int16Array(256);
-(function() {
-  for (let i = 0; i < 256; i++) {
-    let ulaw = ~i & 0xFF;
-    const sign = ulaw & 0x80;
-    const exp  = (ulaw >> 4) & 0x07;
-    const mant = ulaw & 0x0F;
-    let s = ((mant << 3) + 0x84) << exp;
-    s -= 0x84;
-    MULAW_DECODE[i] = sign ? -s : s;
-  }
-})();
+process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:', err));
+process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
 
-function mulawToPcm24k(mulawBuf) {
-  const len = mulawBuf.length;
-  const pcm8k = new Int16Array(len);
-  for (let i = 0; i < len; i++) pcm8k[i] = MULAW_DECODE[mulawBuf[i]];
-  const outLen = len * 3;
-  const out = Buffer.allocUnsafe(outLen * 2);
-  for (let i = 0; i < outLen; i++) {
-    const pos = i / 3;
-    const idx = Math.floor(pos);
-    const t = pos - idx;
-    const p0 = pcm8k[Math.max(0, idx - 1)];
-    const p1 = pcm8k[Math.min(len - 1, idx)];
-    const p2 = pcm8k[Math.min(len - 1, idx + 1)];
-    const p3 = pcm8k[Math.min(len - 1, idx + 2)];
-    const a = -0.5*p0 + 1.5*p1 - 1.5*p2 + 0.5*p3;
-    const b = p0 - 2.5*p1 + 2*p2 - 0.5*p3;
-    const cc = -0.5*p0 + 0.5*p2;
-    const s = a*t*t*t + b*t*t + cc*t + p1;
-    out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(s))), i * 2);
-  }
-  return out;
-}
+app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
-function pcm24kToMulaw(pcmBuf) {
-  const numSamples = Math.floor(pcmBuf.length / 2);
-  const outLen = Math.floor(numSamples / 3);
-  const out = Buffer.allocUnsafe(outLen);
-  const MU = 255;
-  for (let i = 0; i < outLen; i++) {
-    const s0 = pcmBuf.readInt16LE(i * 6);
-    const s1 = (i*6+2 < pcmBuf.length) ? pcmBuf.readInt16LE(i*6+2) : s0;
-    const s2 = (i*6+4 < pcmBuf.length) ? pcmBuf.readInt16LE(i*6+4) : s0;
-    let sample = Math.round((s0+s1+s2)/3);
-    const sign = sample < 0 ? 0x80 : 0x00;
-    if (sample < 0) sample = -sample;
-    if (sample > 32767) sample = 32767;
-    sample = Math.round(Math.log(1 + MU*sample/32767) / Math.log(1+MU) * 127);
-    out[i] = (~(sign | sample)) & 0xFF;
-  }
-  return out;
-}
+wss.on('connection', (ws, req) => {
+  const parameters = url.parse(req.url, true).query;
+  const firstName = parameters.f || 'friend';
+  const leadId = parameters.l || 'unknown';
+  const campaignId = parameters.c || 'unknown';
+  const deepgramApiKey = parameters.k || process.env.DEEPGRAM_API_KEY;
+  const email = parameters.e || '';
 
-wss.on('connection', (browser) => {
+  let dgWs = null;
   let streamSid = null;
-  let inworld = null;
-  let sessionReady = false;
-  let reconnectAttempts = 0;
-  let audioQueue = [];
-  let callActive = false;
-  let isPlaying = false;
-  let appendCount = 0;
-  let leadId = 'unknown';
-  let campaignId = 'unknown';
-  let email = '';
-  let callerFirstName = 'friend';
-  const MAX_RECONNECTS = 3;
+  let keepAliveInterval = null;
 
-  function connectInworld(firstName) {
-    console.log('[INWORLD] Connecting | session:', streamSid);
-    const key = 'YWF2QmVkNTE2ZzlTamFpUERHaHBna3pIa09yY0VEazI6aElUZkhQM0x0aWE3ZDFMcmpKdzdndVJKZ3lLQTlPYzZyNVY5ZzRMcTUxOU9Zbm5ydmh2T2FVMFpodkpuTFBlcw==';
+  ws.on('message', async (message) => {
+    try {
+      const msg = JSON.parse(message);
 
-    inworld = new WebSocket(
-      `wss://api.inworld.ai/api/v1/realtime/session?key=voice-${Date.now()}&protocol=realtime`,
-      { headers: { Authorization: `Basic ${key}` } }
-    );
+      if (msg.event === 'start') {
+        streamSid = msg.start.streamSid;
+        console.log('[START] Stream:', streamSid, '| Lead:', leadId, '| Name:', firstName);
 
-    const sessionTimeout = setTimeout(() => {
-      if (!sessionReady) { console.log('[TIMEOUT] No session.created'); inworld.close(); }
-    }, 10000);
+        dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse', {
+          headers: { Authorization: `Token ${deepgramApiKey}` }
+        });
 
-    const prompt = `Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
+        dgWs.on('open', () => {
+          console.log('[DG] Connected to Deepgram | Lead:', leadId);
+
+          keepAliveInterval = setInterval(() => {
+            if (dgWs.readyState === WebSocket.OPEN) {
+              dgWs.send(JSON.stringify({ type: 'KeepAlive' }));
+            }
+          }, 5000);
+
+          const prompt = `Identity: You are Orion, an outbound SDR calling for Chris, a Senior Precious Metals Advisor at Corventa Metals.
 
 Vocal Style:
 Tone: Calm, confident, assertive, upbeat, and enthusiastic.
@@ -185,211 +138,153 @@ IF YES: "Perfect... I'll get that sent over." (Call send_newsletter)
 "I've got you all set. Chris will be reaching out. Have a great rest of your day, ${firstName}."
 (Call book_appointment with day, time_of_day, and notes from qualifier answers.)`;
 
-    inworld.on('open', () => console.log('[INWORLD] WebSocket open — waiting for session.created'));
-
-    inworld.on('message', async (data) => {
-      let msg;
-      try { msg = JSON.parse(data.toString()); } catch { return; }
-      console.log('[INWORLD RAW]', msg.type);
-
-      if (msg.type === 'session.created') {
-        clearTimeout(sessionTimeout);
-        reconnectAttempts = 0;
-        console.log('[INWORLD] Session created — sending config');
-        inworld.send(JSON.stringify({
-          type: 'session.update',
-          session: {
-            model: 'gpt-4o-mini',
-            output_modalities: ['audio', 'text'],
-            instructions: prompt,
+          dgWs.send(JSON.stringify({
+            type: 'Settings',
             audio: {
-              input: {
-                format: { type: 'audio/pcm', rate: 24000 },
-                turn_detection: {
-                  type: 'semantic_vad',
-                  eagerness: 'high',
-                  create_response: true,
-                  interrupt_response: true,
-                },
-              },
-              output: {
-                voice: 'default-zrwumrrhegpobn7fjiz5mq__chris',
-                model: 'inworld-tts-1.5-max',
-                format: { type: 'audio/pcm', rate: 24000 },
-              },
+              input: { encoding: 'mulaw', sample_rate: 8000 },
+              output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
             },
-            tools: [
-              {
-                type: 'function', name: 'book_appointment',
-                description: 'Call this as soon as the lead confirms a day and AM or PM.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    day: { type: 'string' },
-                    time_of_day: { type: 'string', enum: ['AM', 'PM'] },
-                    notes: { type: 'string' },
-                  },
-                  required: ['day', 'time_of_day'],
+            agent: {
+              listen: {
+                provider: {
+                  type: 'deepgram',
+                  model: 'nova-3'
+                }
+              },
+              think: {
+                provider: {
+                  type: 'open_ai',
+                  model: 'gpt-4o-mini'
                 },
+                prompt: prompt,
+                functions: [
+                  {
+                    name: 'book_appointment',
+                    description: 'Call this as soon as the lead confirms a day and AM or PM for their call with Chris. Include qualifier answers in notes.',
+                    parameters: {
+                      type: 'object',
+                      properties: {
+                        day: { type: 'string', description: 'The day they agreed to e.g. today, tomorrow, Monday' },
+                        time_of_day: { type: 'string', enum: ['AM', 'PM'], description: 'Morning or afternoon' },
+                        notes: { type: 'string', description: 'Qualifier answers: prior metals purchased, liquidity status, retirement account interest' }
+                      },
+                      required: ['day', 'time_of_day']
+                    }
+                  },
+                  {
+                    name: 'send_newsletter',
+                    description: "Call this if the lead agreed to receive Chris's bi-weekly newsletter.",
+                    parameters: {
+                      type: 'object',
+                      properties: {
+                        confirmed: { type: 'boolean', description: 'Always true when called' }
+                      },
+                      required: ['confirmed']
+                    }
+                  }
+                ]
               },
-              {
-                type: 'function', name: 'send_newsletter',
-                description: "Call if lead agrees to receive newsletter.",
-                parameters: { type: 'object', properties: { confirmed: { type: 'boolean' } }, required: ['confirmed'] },
-              },
-            ],
-            temperature: 0.8,
-          },
-        }));
-      }
-
-      if (msg.type === 'session.updated') {
-        const vad = msg.session?.audio?.input?.turn_detection?.type || 'unknown';
-        const voice = msg.session?.audio?.output?.voice || 'unknown';
-        console.log(`[INWORLD] Session updated | VAD: ${vad} | Voice: ${voice}`);
-        sessionReady = true;
-
-        if (audioQueue.length > 0) {
-          console.log(`[QUEUE] Flushing ${audioQueue.length} buffered audio packets`);
-          for (const chunk of audioQueue) {
-            if (inworld.readyState === WebSocket.OPEN) {
-              inworld.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: chunk.toString('base64') }));
+              speak: {
+                provider: {
+                  type: 'cartesia',
+                  model_id: 'sonic-2',
+                  voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' },
+                  language: 'en'
+                },
+                endpoint: {
+                  url: 'https://api.cartesia.ai/tts/bytes',
+                  headers: {
+                    'x-api-key': process.env.CARTESIA_API_KEY || 'sk_car_rKBM7SnrM1aLwSBpfwjj5w'
+                  }
+                }
+              }
             }
-          }
-          audioQueue = [];
-        }
+          }));
+        });
 
-        setTimeout(() => {
-          if (inworld && inworld.readyState === WebSocket.OPEN) {
-            inworld.send(JSON.stringify({
-              type: 'conversation.item.create',
-              item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }
-            }));
-            inworld.send(JSON.stringify({ type: 'response.create' }));
-            console.log('[GREET] Opening greeting triggered');
-          }
-        }, 500);
-
-        console.log('[INWORLD] Ready — waiting for caller audio');
-      }
-
-      if (msg.type === 'conversation.item.added' && msg.item?.content) {
-        console.log('[CHAT]', msg.item.role + ':', JSON.stringify(msg.item.content));
-      }
-
-      if (msg.type === 'response.output_audio.delta' && msg.delta) {
-        isPlaying = true;
-        if (browser.readyState === WebSocket.OPEN && streamSid) {
-          try {
-            const pcmBuf = Buffer.from(msg.delta, 'base64');
-            const mulawBuf = pcm24kToMulaw(pcmBuf);
-            for (let i = 0; i < mulawBuf.length; i += 160) {
-              browser.send(JSON.stringify({
-                event: 'media', streamSid,
-                media: { payload: mulawBuf.slice(i, i + 160).toString('base64') },
+        dgWs.on('message', async (data, isBinary) => {
+          if (isBinary) {
+            if (ws.readyState === WebSocket.OPEN && streamSid) {
+              ws.send(JSON.stringify({
+                event: 'media',
+                streamSid,
+                media: { payload: data.toString('base64') }
               }));
             }
-          } catch (e) { console.error('[AUDIO] Error:', e.message); }
-        }
+            return;
+          }
+
+          try {
+            const dgMsg = JSON.parse(data.toString());
+
+            if (dgMsg.type === 'ConversationText') {
+              console.log('[CHAT]', dgMsg.role + ':', dgMsg.content);
+            }
+
+            if (dgMsg.type === 'Error') {
+              console.error('[ERROR] Deepgram:', JSON.stringify(dgMsg));
+            }
+
+            if (dgMsg.type === 'FunctionCallRequest') {
+              const calls = dgMsg.functions || [];
+              for (const call of calls) {
+                const callArgs = call.arguments ? JSON.parse(call.arguments) : (call.input || {});
+                console.log('[TOOL]', call.name, '|', JSON.stringify(callArgs));
+
+                await fetch('https://agentbman2.base44.app/api/functions/postCallSync', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    tool: call.name,
+                    lead_id: leadId,
+                    campaign_id: campaignId,
+                    params: callArgs,
+                    email: email
+                  })
+                }).catch(e => console.error('Sync Error:', e));
+
+                dgWs.send(JSON.stringify({
+                  type: 'FunctionCallResponse',
+                  id: call.id,
+                  name: call.name,
+                  content: JSON.stringify({ status: 'success' })
+                }));
+              }
+            }
+          } catch (e) {
+            console.error('Failed to parse Deepgram message:', e);
+          }
+        });
+
+        dgWs.on('error', (e) => console.error('[ERROR] Deepgram WS Error:', e.message));
+        dgWs.on('close', (code, reason) => {
+          console.log('[CLOSE] Deepgram closed:', code, '|', reason ? reason.toString() : 'none');
+          if (keepAliveInterval) clearInterval(keepAliveInterval);
+        });
       }
 
-      if (msg.type === 'response.output_audio_transcript.done') console.log('[TRANSCRIPT]', msg.transcript);
-
-      if (msg.type === 'response.output_audio.done') {
-        setTimeout(() => { isPlaying = false; }, 300);
+      if (msg.event === 'media' && dgWs && dgWs.readyState === WebSocket.OPEN) {
+        const audioBuffer = Buffer.from(msg.media.payload, 'base64');
+        if (audioBuffer.length > 0) dgWs.send(audioBuffer);
       }
 
-      if (msg.type === 'response.done') {
-        console.log('[DONE] Response complete');
-        isPlaying = false;
-        if (inworld && inworld.readyState === WebSocket.OPEN) {
-          inworld.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
-          console.log('[RESET] Buffer cleared for next turn');
-        }
+      if (msg.event === 'stop') {
+        console.log('[STOP] Stream stopped:', streamSid);
+        if (keepAliveInterval) clearInterval(keepAliveInterval);
+        if (dgWs) dgWs.close(1000, 'Call ended');
       }
 
-      if (msg.type === 'input_audio_buffer.speech_started') console.log('[VAD] Speech started!');
-      if (msg.type === 'input_audio_buffer.speech_stopped') console.log('[VAD] Speech stopped!');
-
-      if (msg.type === 'response.function_call_arguments.done') {
-        const fnName = msg.name;
-        let fnArgs = {};
-        try { fnArgs = JSON.parse(msg.arguments || '{}'); } catch(e) {}
-        console.log('[TOOL]', fnName, JSON.stringify(fnArgs));
-        fetch('https://agentbman2.base44.app/api/functions/postCallSync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tool: fnName, lead_id: leadId, campaign_id: campaignId, params: fnArgs, email }),
-        }).catch(e => console.error('Sync Error:', e));
-        if (inworld.readyState === WebSocket.OPEN) {
-          inworld.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: msg.call_id, output: JSON.stringify({ status: 'success' }) } }));
-          inworld.send(JSON.stringify({ type: 'response.create' }));
-        }
-      }
-
-      if (msg.type === 'error') console.error('[INWORLD ERROR]', JSON.stringify(msg));
-    });
-
-    inworld.on('close', (code) => {
-      console.log('[INWORLD] Closed (' + code + ')');
-      sessionReady = false;
-      if (callActive && reconnectAttempts < MAX_RECONNECTS) {
-        reconnectAttempts++;
-        console.log('[RECONNECT] Attempt', reconnectAttempts);
-        setTimeout(() => connectInworld(callerFirstName), 1000);
-      }
-    });
-
-    inworld.on('error', (err) => console.error('[INWORLD] WS Error:', err.message));
-  }
-
-  browser.on('message', (message) => {
-    let msg;
-    try { msg = JSON.parse(message.toString()); } catch { return; }
-    if (msg.event !== 'media') console.log('[TWILIO]', msg.event);
-
-    if (msg.event === 'start') {
-      streamSid = msg.start.streamSid;
-      leadId = msg.start.customParameters?.l || 'unknown';
-      campaignId = msg.start.customParameters?.c || 'unknown';
-      email = msg.start.customParameters?.e || '';
-      callerFirstName = msg.start.customParameters?.f || msg.start.customParameters?.firstName || 'friend';
-      callActive = true;
-      console.log('[START] Stream:', streamSid, '| Lead:', leadId, '| Name:', callerFirstName);
-      connectInworld(callerFirstName);
-    }
-
-    if (msg.event === 'media') {
-      const mulawBuf = Buffer.from(msg.media.payload, 'base64');
-      const pcmBuf = mulawToPcm24k(mulawBuf);
-
-      if (!sessionReady || !inworld || inworld.readyState !== WebSocket.OPEN) {
-        audioQueue.push(pcmBuf);
-        return;
-      }
-
-      if (isPlaying) return;
-
-      appendCount++;
-      if (appendCount % 25 === 0) console.log('[AUDIO] Sent', appendCount, 'packets to Inworld');
-      inworld.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: pcmBuf.toString('base64') }));
-    }
-
-    if (msg.event === 'stop') {
-      callActive = false;
-      console.log('[STOP] Stream stopped:', streamSid);
-      audioQueue = [];
-      if (inworld) inworld.close();
+    } catch (err) {
+      console.error('Processing Error:', err);
     }
   });
 
-  browser.on('close', () => {
+  ws.on('close', () => {
     console.log('[DISC] Client disconnected');
-    audioQueue = [];
-    if (inworld) inworld.close();
+    if (keepAliveInterval) clearInterval(keepAliveInterval);
+    if (dgWs) dgWs.close(1000, 'Client disconnected');
   });
-
-  browser.on('error', (err) => console.error('[BROWSER ERROR]', err.message));
 });
 
-server.listen(PORT);
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, '0.0.0.0', () => console.log('[START] Orion Engine Running on Port', PORT));
