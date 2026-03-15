@@ -8,31 +8,43 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+console.log('[START] Orion Engine Running');
+console.log('[VERSION] Build v2 — Deepgram STT + gpt-4o-mini + Cartesia TTS + AgentBman Sync');
+
+process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:', err));
+process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
+
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
-process.on('uncaughtException', (err) => console.error('[CRIT]', err));
-process.on('unhandledRejection', (reason) => console.error('[WARN]', reason));
-
 wss.on('connection', (ws, req) => {
-  const parameters = url.parse(req.url, true).query;
-  const firstName = parameters.f || 'there';
-  const leadId = parameters.l || 'unknown';
-  const campaignId = parameters.c || 'unknown';
-  const email = parameters.e || '';
-  const callbackUrl = parameters.callback_url || process.env.AGENTBMAN_CALLBACK_URL;
-  const transferNumber = parameters.transfer_number || process.env.DEFAULT_TRANSFER_NUMBER;
+  // ── Read initial params from WebSocket query string (fallback only) ──────────
+  // NOTE: The real values come from TwiML <Parameter> tags in the 'start' event.
+  // These query string values are only used if customParameters is empty.
+  const queryParams = url.parse(req.url, true).query;
+  let leadId      = queryParams.l || 'unknown';
+  let campaignId  = queryParams.c || 'unknown';
+  let firstName   = queryParams.f || 'there';
+  let email       = queryParams.e || '';
+  let callbackUrl = queryParams.callback_url || process.env.AGENTBMAN_CALLBACK_URL || '';
+  let transferNumber = queryParams.transfer_number || process.env.DEFAULT_TRANSFER_NUMBER || '';
+
   const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
 
   let dgWs = null;
   let streamSid = null;
   let keepAliveInterval = null;
   let transcriptBuffer = [];
+  let callOutcome = 'completed'; // track what happened on the call
+  let callEndedNotified = false; // prevent double call_ended
 
-  // Helper: POST back to AgentBman
+  // ── Helper: POST back to AgentBman postCallSync ───────────────────────────────
   async function notifyAgentBman(tool, params = {}) {
-    if (!callbackUrl) return;
+    if (!callbackUrl) {
+      console.warn(`[CALLBACK] No callback URL set — cannot notify AgentBman of "${tool}"`);
+      return;
+    }
     try {
-      await fetch(callbackUrl, {
+      const res = await fetch(callbackUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -43,8 +55,11 @@ wss.on('connection', (ws, req) => {
           params,
         }),
       });
+      if (!res.ok) {
+        console.warn(`[CALLBACK] ${tool} → HTTP ${res.status}`);
+      }
     } catch (err) {
-      console.error('[CALLBACK] Failed:', err.message);
+      console.error(`[CALLBACK] Failed to notify "${tool}":`, err.message);
     }
   }
 
@@ -52,90 +67,117 @@ wss.on('connection', (ws, req) => {
     try {
       const msg = JSON.parse(message);
 
+      // ── STREAM START ───────────────────────────────────────────────────────────
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
 
-        // Read params passed via TwiML <Parameter> tags
+        // BUG FIX: Read params from TwiML <Parameter> tags, not just query string.
+        // customParameters is where Twilio puts values from <Stream><Parameter> tags.
         const customParams = msg.start.customParameters || {};
-        const f = customParams.f || firstName;
-        const l = customParams.l || leadId;
-        const cb = customParams.callback_url || callbackUrl;
 
-        console.log(`[START] Stream: ${streamSid} | Lead: ${l} | Name: ${f}`);
+        // Override with customParams values — these are the authoritative source
+        if (customParams.f) firstName   = customParams.f;
+        if (customParams.l) leadId      = customParams.l;
+        if (customParams.c) campaignId  = customParams.c;
+        if (customParams.e) email       = customParams.e;
+        if (customParams.callback_url)    callbackUrl   = customParams.callback_url;
+        if (customParams.transfer_number) transferNumber = customParams.transfer_number;
 
+        console.log(`[START] Stream: ${streamSid} | Lead: ${leadId} | Name: ${firstName}`);
+        console.log(`[CONFIG] Campaign: ${campaignId} | Email: ${email}`);
+        console.log(`[CONFIG] Callback: ${callbackUrl || 'NOT SET'}`);
+        console.log(`[CONFIG] Transfer#: ${transferNumber || 'NOT SET'}`);
+
+        // ── Connect to Deepgram Voice Agent ───────────────────────────────────────
         dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse', {
           headers: { Authorization: `Token ${deepgramApiKey}` }
         });
 
         dgWs.on('open', () => {
+          console.log(`[DG] Connected to Deepgram | Lead: ${leadId}`);
+
           keepAliveInterval = setInterval(() => {
-            if (dgWs.readyState === WebSocket.OPEN) {
+            if (dgWs && dgWs.readyState === WebSocket.OPEN) {
               dgWs.send(JSON.stringify({ type: 'KeepAlive' }));
             }
           }, 5000);
 
+          // ── Agent Prompt ────────────────────────────────────────────────────────
+          // NOTE: ${firstName} is substituted at runtime — DO NOT use ${day} or
+          // ${time_of_day} here as they are not known at prompt creation time.
           const prompt = `Identity: You are Alex, an AI outbound sales agent calling on behalf of the team.
 
 Vocal Style:
 - Calm, confident, direct. Human-sounding, natural contractions.
 - Do NOT pause after statements waiting for validation.
 - Keep momentum. One sentence flows immediately into the next.
-- Never read markup aloud.
+- Never read markup aloud. Never say "quote" or read punctuation.
 
-Primary Objective: Get a LIVE TRANSFER to a sales agent.
+Primary Objective: Get a LIVE TRANSFER to a sales agent right now.
 Backup Objective: Book an appointment if live transfer is declined.
 
 Core Rules:
-- NEVER speak first. Wait for prospect to say something.
-- If they confirm they can talk, move straight to Phase 2.
+- NEVER speak first. Wait for the prospect to say something before you speak.
+- The instant they confirm they can talk, move straight to Phase 2. Do not linger.
 - Call live_transfer the INSTANT they agree to speak with someone now.
-- Call book_appointment if they prefer a scheduled callback.
-- If not interested after one objection response, end politely.
+- Call book_appointment the instant they confirm a day and time.
+- If not interested after one objection, end politely. Do not push again.
+- Never mention AI, robots, automation, or that this is an automated call.
 
 PHASE 1 - OPEN
-(Wait for them to say hello)
-"Hi, is this ${f}?"
-(After confirmed)
-"Hey ${f}, hope I'm not catching you at a bad time?"
+(Wait in silence for them to say hello first)
+
+"Hi, is this ${firstName}?"
+(After they confirm identity)
+"Hey ${firstName}, hope I'm not catching you at a bad time?"
 
 IF BUSY:
-"No problem at all — I'll be super quick. I'm calling about something that might save you money on your energy bills. When's a better time to connect for 2 minutes?"
-(Wait for response)
+"No problem at all — I'll be super quick. I'm calling because we're helping homeowners in your area lock in some serious savings on their energy bills. When's a better time to grab just 2 minutes?"
+(Wait for response. Note the day/time they give.)
 
 IF AVAILABLE:
-Move to Phase 2 immediately.
+Move immediately to Phase 2.
 
-PHASE 2 - PITCH
-"Great. So the reason I'm reaching out — we work with homeowners in your area who've seen their energy costs go up, and we help them lock in significant savings. A lot of people are seeing 30 to 50 percent off their monthly bills."
-"I actually have one of our senior energy specialists available right now who can walk you through exactly what savings would look like for your specific property. It takes about 5 minutes. Can I connect you with them right now?"
+PHASE 2 - PITCH (keep momentum — no pauses between sentences)
+"Great. So the reason I'm reaching out — we work with homeowners who've seen their energy costs keep climbing, and we're helping them lock in real savings. A lot of people are cutting 30 to 50 percent off their monthly bills."
+"I actually have one of our senior energy specialists available right now who can pull up the numbers for your specific property. It takes about 5 minutes. Can I connect you with them right now?"
 
 IF YES TO LIVE TRANSFER:
-(Call live_transfer immediately)
+Call live_transfer immediately, then say:
 "Perfect — connecting you now. One moment."
 
 IF PREFERS APPOINTMENT:
-"Totally understand. Let's set up a quick call at a time that works for you. Does tomorrow morning or afternoon work better?"
-(Wait for response, then call book_appointment)
+"Totally understand. Let's lock in a quick time that works for you. Does tomorrow morning or afternoon work better?"
+(Wait for their answer, then call book_appointment with the confirmed day and time.)
 
 PHASE 3 - OBJECTIONS
 
-OBJECTION: Already have solar / not interested in solar
-"Completely understand ${f}. This isn't specifically about solar — we look at the full picture of what's driving your energy costs and find the best fit. Worth a quick 5 minutes with our specialist?"
+OBJECTION: Already have solar
+"Completely understand ${firstName}. This isn't specifically about solar — we look at the full picture of what's driving your energy costs and find the best match. Worth just 5 minutes with our specialist to see the numbers?"
 
-OBJECTION: Too busy / bad time
-"No worries at all. What's a better time this week? Even 5 minutes could be worth it for the savings involved."
+OBJECTION: Not interested in saving money / happy with bills
+"Fair enough ${firstName}. Can I ask — are you on a fixed rate or are your bills fluctuating? Sometimes people are surprised what's available in their area."
+(If still not interested, end politely.)
 
-OBJECTION: Not interested
-"No problem ${f}, I appreciate your time. Have a great day."
-(End call — do NOT call any functions)
+OBJECTION: Too busy right now
+"No worries at all. What's a better time this week? Even 5 minutes could put real money back in your pocket."
 
-PHASE 4 - CLOSE (after appointment booked)
-"Perfect ${f}, you're all set. Someone from our team will call you ${day} in the ${time_of_day}. Looking forward to it."`;
+OBJECTION: Is this a sales call / who are you with
+"We work with homeowners in your area to find energy savings — I'm just checking if there's an opportunity for you before connecting you with one of our specialists. It's completely free to look at the numbers."
 
+OBJECTION: Hard no / not interested after explanation
+"No problem at all ${firstName}, I appreciate your time. Have a great day."
+(End call. Do NOT call any functions.)
+
+PHASE 4 - CLOSE (after appointment is confirmed)
+"Perfect, you're all set. Someone from our team will give you a call at the time we discussed. Looking forward to it, have a great day."
+(Call book_appointment with the confirmed day, time_of_day, and any notes from the conversation.)`;
+
+          // ── Deepgram Settings ───────────────────────────────────────────────────
           dgWs.send(JSON.stringify({
             type: 'Settings',
             audio: {
-              input: { encoding: 'mulaw', sample_rate: 8000 },
+              input:  { encoding: 'mulaw', sample_rate: 8000 },
               output: { encoding: 'mulaw', sample_rate: 8000, container: 'none' }
             },
             agent: {
@@ -148,13 +190,13 @@ PHASE 4 - CLOSE (after appointment booked)
                 functions: [
                   {
                     name: 'live_transfer',
-                    description: 'Call this IMMEDIATELY when the lead agrees to speak with a specialist right now. This connects them live to a sales agent.',
+                    description: 'Call this IMMEDIATELY the instant the lead agrees to speak with a specialist right now. Do not delay. This connects them live to a sales agent.',
                     parameters: {
                       type: 'object',
                       properties: {
                         notes: {
                           type: 'string',
-                          description: 'Any context about the lead to pass to the sales agent'
+                          description: 'Brief context about the lead and conversation to pass to the sales agent. Include any pain points or interest signals mentioned.'
                         }
                       },
                       required: []
@@ -162,13 +204,23 @@ PHASE 4 - CLOSE (after appointment booked)
                   },
                   {
                     name: 'book_appointment',
-                    description: 'Call this when the lead prefers a scheduled callback instead of transferring now.',
+                    description: 'Call this when the lead confirms a day and time for a scheduled callback instead of transferring now. Always include both day and time_of_day.',
                     parameters: {
                       type: 'object',
                       properties: {
-                        day: { type: 'string', description: 'e.g. today, tomorrow, Monday' },
-                        time_of_day: { type: 'string', enum: ['AM', 'PM'] },
-                        notes: { type: 'string', description: 'Any context about the conversation' }
+                        day: {
+                          type: 'string',
+                          description: 'The day they agreed to, e.g. "today", "tomorrow", "Monday", "Wednesday"'
+                        },
+                        time_of_day: {
+                          type: 'string',
+                          enum: ['AM', 'PM'],
+                          description: 'Morning (AM) or afternoon/evening (PM)'
+                        },
+                        notes: {
+                          type: 'string',
+                          description: 'Any useful context from the conversation: their current energy situation, concerns mentioned, etc.'
+                        }
                       },
                       required: ['day', 'time_of_day']
                     }
@@ -189,9 +241,11 @@ PHASE 4 - CLOSE (after appointment booked)
               }
             }
           }));
-        });
+        }); // end dgWs.on('open')
 
+        // ── Deepgram Messages ───────────────────────────────────────────────────
         dgWs.on('message', async (data, isBinary) => {
+          // Binary = TTS audio — forward to Twilio
           if (isBinary) {
             if (ws.readyState === WebSocket.OPEN && streamSid) {
               ws.send(JSON.stringify({
@@ -206,30 +260,43 @@ PHASE 4 - CLOSE (after appointment booked)
           try {
             const dgMsg = JSON.parse(data.toString());
 
+            // ── Transcript line spoken ──────────────────────────────────────────
             if (dgMsg.type === 'ConversationText') {
               const line = dgMsg.content || '';
-              const role = dgMsg.role || 'agent';
-              console.log(`[CHAT] ${role}: ${line}`);
+              const role = dgMsg.role || 'agent'; // 'agent' or 'user'
+              console.log(`[CHAT] ${role.toUpperCase()}: ${line}`);
 
-              // Stream transcript back to AgentBman in real time
+              transcriptBuffer.push(`[${role.toUpperCase()}]: ${line}`);
+
+              // Stream to AgentBman real-time (fire and forget — don't await)
               notifyAgentBman('transcript_update', {
                 transcript_line: line,
                 speaker: role === 'user' ? 'lead' : 'agent',
-              }).catch(() => {});
-
-              transcriptBuffer.push(`[${role.toUpperCase()}]: ${line}`);
+              });
             }
 
+            // ── AI function call triggered ──────────────────────────────────────
             if (dgMsg.type === 'FunctionCallRequest') {
               const calls = dgMsg.functions || [];
+
               for (const call of calls) {
-                const callArgs = call.arguments ? JSON.parse(call.arguments) : (call.input || {});
+                const callArgs = call.arguments
+                  ? JSON.parse(call.arguments)
+                  : (call.input || {});
+
                 console.log(`[TOOL] ${call.name} |`, JSON.stringify(callArgs));
 
-                // Notify AgentBman
+                // Track outcome for call_ended
+                if (call.name === 'live_transfer') {
+                  callOutcome = 'transferred';
+                } else if (call.name === 'book_appointment') {
+                  callOutcome = 'appointment_booked';
+                }
+
+                // Notify AgentBman (await so we know it was received)
                 await notifyAgentBman(call.name, callArgs);
 
-                // Confirm function back to Deepgram
+                // Confirm function result back to Deepgram so it continues
                 dgWs.send(JSON.stringify({
                   type: 'FunctionCallResponse',
                   id: call.id,
@@ -244,46 +311,74 @@ PHASE 4 - CLOSE (after appointment booked)
             }
 
           } catch (e) {
-            console.error('Parse error:', e);
+            console.error('[ERROR] Failed to parse Deepgram message:', e.message);
           }
-        });
+        }); // end dgWs.on('message')
 
-        dgWs.on('error', (e) => console.error('[ERROR] DG WS:', e.message));
-        dgWs.on('close', (code) => {
-          console.log('[CLOSE] Deepgram closed:', code);
+        dgWs.on('error', (e) => console.error('[ERROR] Deepgram WS Error:', e.message));
+
+        dgWs.on('close', (code, reason) => {
+          console.log('[CLOSE] Deepgram closed:', code, '|', reason ? reason.toString() : 'none');
           if (keepAliveInterval) clearInterval(keepAliveInterval);
         });
-      }
 
+      } // end msg.event === 'start'
+
+      // ── STT audio from Twilio → forward to Deepgram ───────────────────────────
       if (msg.event === 'media' && dgWs && dgWs.readyState === WebSocket.OPEN) {
         const audioBuffer = Buffer.from(msg.media.payload, 'base64');
         if (audioBuffer.length > 0) dgWs.send(audioBuffer);
       }
 
+      // ── Call ended ────────────────────────────────────────────────────────────
       if (msg.event === 'stop') {
         console.log('[STOP] Stream stopped:', streamSid);
+
         if (keepAliveInterval) clearInterval(keepAliveInterval);
 
-        // Send full transcript and call_ended to AgentBman
-        await notifyAgentBman('call_ended', {
-          full_transcript: transcriptBuffer.join('\n'),
-          outcome: 'completed',
-        }).catch(() => {});
+        // Only fire call_ended once
+        if (!callEndedNotified) {
+          callEndedNotified = true;
+          await notifyAgentBman('call_ended', {
+            full_transcript: transcriptBuffer.join('\n'),
+            outcome: callOutcome,
+            duration_seconds: null, // Twilio status callback will provide actual duration
+          });
+        }
 
         if (dgWs) dgWs.close(1000, 'Call ended');
       }
 
     } catch (err) {
-      console.error('Processing Error:', err);
+      console.error('[ERROR] Processing Error:', err.message);
     }
-  });
+  }); // end ws.on('message')
 
   ws.on('close', () => {
-    console.log('[DISC] Client disconnected');
+    console.log('[DISC] Client WebSocket disconnected');
+
     if (keepAliveInterval) clearInterval(keepAliveInterval);
+
+    // Fire call_ended if not already sent (e.g. abrupt disconnect)
+    if (!callEndedNotified) {
+      callEndedNotified = true;
+      notifyAgentBman('call_ended', {
+        full_transcript: transcriptBuffer.join('\n'),
+        outcome: callOutcome,
+        duration_seconds: null,
+      });
+    }
+
     if (dgWs) dgWs.close(1000, 'Client disconnected');
   });
-});
+
+}); // end wss.on('connection')
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, '0.0.0.0', () => console.log('[START] Orion Engine on Port', PORT));
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[START] Orion Engine Running on Port ${PORT}`);
+  console.log(`[CONFIG] AGENTBMAN_CALLBACK_URL: ${process.env.AGENTBMAN_CALLBACK_URL || 'NOT SET — set this env var on Render'}`);
+  console.log(`[CONFIG] DEFAULT_TRANSFER_NUMBER: ${process.env.DEFAULT_TRANSFER_NUMBER || 'NOT SET'}`);
+  console.log(`[CONFIG] DEEPGRAM_API_KEY: ${process.env.DEEPGRAM_API_KEY ? 'SET' : 'NOT SET'}`);
+  console.log(`[CONFIG] CARTESIA_API_KEY: ${process.env.CARTESIA_API_KEY ? 'SET' : 'NOT SET'}`);
+});
