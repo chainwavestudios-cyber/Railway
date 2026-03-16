@@ -9,9 +9,9 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running');
-console.log('[VERSION] Build v2 — Deepgram STT + gpt-4o-mini + Cartesia TTS + AgentBman Sync');
+console.log('[VERSION] Build v3 — Deepgram STT + gpt-4o-mini + Cartesia TTS + AgentBman Sync + Inbound Support');
 
-process.on('uncaughtException', (err) => console.error('[CRIT] CRITICAL ERROR:', err));
+process.on('uncaughtException',  (err)    => console.error('[CRIT] CRITICAL ERROR:', err));
 process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
 
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
@@ -20,22 +20,23 @@ wss.on('connection', (ws, req) => {
   // ── Read initial params from WebSocket query string (fallback only) ──────────
   // NOTE: The real values come from TwiML <Parameter> tags in the 'start' event.
   // These query string values are only used if customParameters is empty.
-  const queryParams = url.parse(req.url, true).query;
-  let leadId      = queryParams.l || 'unknown';
-  let campaignId  = queryParams.c || 'unknown';
-  let firstName   = queryParams.f || 'there';
-  let email       = queryParams.e || '';
-  let callbackUrl = queryParams.callback_url || process.env.AGENTBMAN_CALLBACK_URL || '';
+  const queryParams  = url.parse(req.url, true).query;
+  let leadId         = queryParams.l            || 'unknown';
+  let campaignId     = queryParams.c            || 'unknown';
+  let firstName      = queryParams.f            || 'there';
+  let email          = queryParams.e            || '';
+  let callDirection  = queryParams.direction    || 'outbound';
+  let callbackUrl    = queryParams.callback_url || process.env.AGENTBMAN_CALLBACK_URL || '';
   let transferNumber = queryParams.transfer_number || process.env.DEFAULT_TRANSFER_NUMBER || '';
 
   const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
 
-  let dgWs = null;
-  let streamSid = null;
-  let keepAliveInterval = null;
-  let transcriptBuffer = [];
-  let callOutcome = 'completed'; // track what happened on the call
-  let callEndedNotified = false; // prevent double call_ended
+  let dgWs               = null;
+  let streamSid          = null;
+  let keepAliveInterval  = null;
+  let transcriptBuffer   = [];
+  let callOutcome        = 'completed';
+  let callEndedNotified  = false;
 
   // ── Helper: POST back to AgentBman postCallSync ───────────────────────────────
   async function notifyAgentBman(tool, params = {}) {
@@ -45,11 +46,11 @@ wss.on('connection', (ws, req) => {
     }
     try {
       const res = await fetch(callbackUrl, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tool,
-          lead_id: leadId,
+          lead_id:     leadId,
           campaign_id: campaignId,
           email,
           params,
@@ -76,16 +77,19 @@ wss.on('connection', (ws, req) => {
         const customParams = msg.start.customParameters || {};
 
         // Override with customParams values — these are the authoritative source
-        if (customParams.f) firstName   = customParams.f;
-        if (customParams.l) leadId      = customParams.l;
-        if (customParams.c) campaignId  = customParams.c;
-        if (customParams.e) email       = customParams.e;
-        if (customParams.callback_url)    callbackUrl   = customParams.callback_url;
-        if (customParams.transfer_number) transferNumber = customParams.transfer_number;
+        if (customParams.f)                firstName      = customParams.f;
+        if (customParams.l)                leadId         = customParams.l;
+        if (customParams.c)                campaignId     = customParams.c;
+        if (customParams.e)                email          = customParams.e;
+        if (customParams.direction)        callDirection  = customParams.direction;
+        if (customParams.callback_url)     callbackUrl    = customParams.callback_url;
+        if (customParams.transfer_number)  transferNumber = customParams.transfer_number;
 
-        console.log(`[START] Stream: ${streamSid} | Lead: ${leadId} | Name: ${firstName}`);
+        const isInbound = callDirection === 'inbound';
+
+        console.log(`[START] Stream: ${streamSid} | Lead: ${leadId} | Name: ${firstName} | Direction: ${callDirection}`);
         console.log(`[CONFIG] Campaign: ${campaignId} | Email: ${email}`);
-        console.log(`[CONFIG] Callback: ${callbackUrl || 'NOT SET'}`);
+        console.log(`[CONFIG] Callback: ${callbackUrl  || 'NOT SET'}`);
         console.log(`[CONFIG] Transfer#: ${transferNumber || 'NOT SET'}`);
 
         // ── Connect to Deepgram Voice Agent ───────────────────────────────────────
@@ -94,7 +98,7 @@ wss.on('connection', (ws, req) => {
         });
 
         dgWs.on('open', () => {
-          console.log(`[DG] Connected to Deepgram | Lead: ${leadId}`);
+          console.log(`[DG] Connected to Deepgram | Lead: ${leadId} | Direction: ${callDirection}`);
 
           keepAliveInterval = setInterval(() => {
             if (dgWs && dgWs.readyState === WebSocket.OPEN) {
@@ -102,10 +106,8 @@ wss.on('connection', (ws, req) => {
             }
           }, 5000);
 
-          // ── Agent Prompt ────────────────────────────────────────────────────────
-          // NOTE: ${firstName} is substituted at runtime — DO NOT use ${day} or
-          // ${time_of_day} here as they are not known at prompt creation time.
-          const prompt = `Identity: You are Alex, an AI outbound sales agent calling on behalf of the team.
+          // ── Prompts: separate for inbound vs outbound ───────────────────────────
+          const outboundPrompt = `Identity: You are Alex, an AI outbound sales agent calling on behalf of the team.
 
 Vocal Style:
 - Calm, confident, direct. Human-sounding, natural contractions.
@@ -173,6 +175,59 @@ PHASE 4 - CLOSE (after appointment is confirmed)
 "Perfect, you're all set. Someone from our team will give you a call at the time we discussed. Looking forward to it, have a great day."
 (Call book_appointment with the confirmed day, time_of_day, and any notes from the conversation.)`;
 
+          const inboundPrompt = `Identity: You are Alex, an assistant answering calls for the team.
+
+Vocal Style:
+- Warm, welcoming, helpful. Natural contractions.
+- You are RECEIVING this call — they called you. Treat them accordingly.
+- Never mention AI, robots, automation, or that this is an automated system.
+
+Primary Objective: Understand why they called. If they have interest in 
+energy savings, solar, or roofing — get them to a live specialist or book 
+a callback appointment.
+
+Core Rules:
+- Answer immediately and warmly. Do not wait for them to speak first.
+- Listen to why they called before pitching anything.
+- If they mention energy bills, solar, roofing, or home improvements → offer specialist.
+- If they're calling back about a previous conversation → acknowledge it warmly.
+- If wrong number or clearly no interest → end politely, do not push.
+- Call live_transfer the instant they agree to speak with a specialist now.
+- Call book_appointment the instant they confirm a day and time.
+
+OPEN (speak immediately when connected):
+"Thanks for calling, this is Alex. How can I help you today?"
+
+IF THEY MENTION ENERGY / SOLAR / ROOFING / BILLS:
+"Perfect, you've reached the right place. I can connect you with one of our 
+specialists who can walk you through everything. Do you have a couple minutes 
+right now, or would a scheduled callback work better for you?"
+
+IF AVAILABLE NOW → call live_transfer immediately.
+IF WANTS CALLBACK → confirm day and time, call book_appointment.
+
+IF THEY'RE CALLING BACK FROM AN EARLIER OUTREACH:
+"Great to hear from you${firstName !== 'there' ? `, ${firstName}` : ''}! 
+Let me get you connected with a specialist right now — do you have a few 
+minutes?"
+If yes → call live_transfer immediately.
+If not → book_appointment.
+
+IF WRONG NUMBER OR NO INTEREST:
+"No problem at all, sorry to bother you. Have a great day!"
+(End call. Do NOT call any functions.)
+
+OBJECTION: What is this about / who are you with
+"We help homeowners in your area reduce their energy costs — completely free 
+to look at the numbers. I can connect you with a specialist in about 5 minutes 
+if you're curious?"
+
+OBJECTION: Already handled / not interested
+"Completely understand. Thanks for taking the call — have a wonderful day."
+(End call. Do NOT call any functions.)`;
+
+          const prompt = isInbound ? inboundPrompt : outboundPrompt;
+
           // ── Deepgram Settings ───────────────────────────────────────────────────
           dgWs.send(JSON.stringify({
             type: 'Settings',
@@ -185,7 +240,7 @@ PHASE 4 - CLOSE (after appointment is confirmed)
                 provider: { type: 'deepgram', model: 'nova-3' }
               },
               think: {
-                provider: { type: 'open_ai', model: 'gpt-4o-mini' },
+                provider:  { type: 'open_ai', model: 'gpt-4o-mini' },
                 prompt,
                 functions: [
                   {
@@ -229,13 +284,13 @@ PHASE 4 - CLOSE (after appointment is confirmed)
               },
               speak: {
                 provider: {
-                  type: 'cartesia',
+                  type:     'cartesia',
                   model_id: 'sonic-2',
-                  voice: { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' },
+                  voice:    { mode: 'id', id: 'baad9eb9-b2f4-474d-8cb7-1926b9db84ca' },
                   language: 'en'
                 },
                 endpoint: {
-                  url: 'https://api.cartesia.ai/tts/bytes',
+                  url:     'https://api.cartesia.ai/tts/bytes',
                   headers: { 'x-api-key': process.env.CARTESIA_API_KEY }
                 }
               }
@@ -249,7 +304,7 @@ PHASE 4 - CLOSE (after appointment is confirmed)
           if (isBinary) {
             if (ws.readyState === WebSocket.OPEN && streamSid) {
               ws.send(JSON.stringify({
-                event: 'media',
+                event:    'media',
                 streamSid,
                 media: { payload: data.toString('base64') }
               }));
@@ -260,15 +315,15 @@ PHASE 4 - CLOSE (after appointment is confirmed)
           try {
             const dgMsg = JSON.parse(data.toString());
 
-            // ── Transcript line spoken ──────────────────────────────────────────
+            // ── Transcript line ─────────────────────────────────────────────────
             if (dgMsg.type === 'ConversationText') {
               const line = dgMsg.content || '';
-              const role = dgMsg.role || 'agent'; // 'agent' or 'user'
+              const role = dgMsg.role    || 'agent';
               console.log(`[CHAT] ${role.toUpperCase()}: ${line}`);
 
               transcriptBuffer.push(`[${role.toUpperCase()}]: ${line}`);
 
-              // Stream to AgentBman real-time (fire and forget — don't await)
+              // Stream to AgentBman real-time (fire and forget)
               notifyAgentBman('transcript_update', {
                 transcript_line: line,
                 speaker: role === 'user' ? 'lead' : 'agent',
@@ -298,9 +353,9 @@ PHASE 4 - CLOSE (after appointment is confirmed)
 
                 // Confirm function result back to Deepgram so it continues
                 dgWs.send(JSON.stringify({
-                  type: 'FunctionCallResponse',
-                  id: call.id,
-                  name: call.name,
+                  type:    'FunctionCallResponse',
+                  id:      call.id,
+                  name:    call.name,
                   content: JSON.stringify({ status: 'success' })
                 }));
               }
@@ -336,13 +391,13 @@ PHASE 4 - CLOSE (after appointment is confirmed)
 
         if (keepAliveInterval) clearInterval(keepAliveInterval);
 
-        // Only fire call_ended once
         if (!callEndedNotified) {
           callEndedNotified = true;
           await notifyAgentBman('call_ended', {
-            full_transcript: transcriptBuffer.join('\n'),
-            outcome: callOutcome,
-            duration_seconds: null, // Twilio status callback will provide actual duration
+            full_transcript:  transcriptBuffer.join('\n'),
+            outcome:          callOutcome,
+            direction:        callDirection,
+            duration_seconds: null,
           });
         }
 
@@ -363,8 +418,9 @@ PHASE 4 - CLOSE (after appointment is confirmed)
     if (!callEndedNotified) {
       callEndedNotified = true;
       notifyAgentBman('call_ended', {
-        full_transcript: transcriptBuffer.join('\n'),
-        outcome: callOutcome,
+        full_transcript:  transcriptBuffer.join('\n'),
+        outcome:          callOutcome,
+        direction:        callDirection,
         duration_seconds: null,
       });
     }
@@ -377,8 +433,8 @@ PHASE 4 - CLOSE (after appointment is confirmed)
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[START] Orion Engine Running on Port ${PORT}`);
-  console.log(`[CONFIG] AGENTBMAN_CALLBACK_URL: ${process.env.AGENTBMAN_CALLBACK_URL || 'NOT SET — set this env var on Render'}`);
+  console.log(`[CONFIG] AGENTBMAN_CALLBACK_URL:  ${process.env.AGENTBMAN_CALLBACK_URL  || 'NOT SET — set this env var on Render'}`);
   console.log(`[CONFIG] DEFAULT_TRANSFER_NUMBER: ${process.env.DEFAULT_TRANSFER_NUMBER || 'NOT SET'}`);
-  console.log(`[CONFIG] DEEPGRAM_API_KEY: ${process.env.DEEPGRAM_API_KEY ? 'SET' : 'NOT SET'}`);
-  console.log(`[CONFIG] CARTESIA_API_KEY: ${process.env.CARTESIA_API_KEY ? 'SET' : 'NOT SET'}`);
+  console.log(`[CONFIG] DEEPGRAM_API_KEY:        ${process.env.DEEPGRAM_API_KEY  ? 'SET' : 'NOT SET'}`);
+  console.log(`[CONFIG] CARTESIA_API_KEY:        ${process.env.CARTESIA_API_KEY  ? 'SET' : 'NOT SET'}`);
 });
