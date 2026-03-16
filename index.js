@@ -26,6 +26,8 @@ wss.on('connection', (ws, req) => {
   let firstName      = queryParams.f            || 'there';
   let email          = queryParams.e            || '';
   let callDirection  = queryParams.direction    || 'outbound';
+  let scriptId       = queryParams.script_id    || '';
+  let customScript   = queryParams.script_text  || '';
   let callbackUrl    = queryParams.callback_url || process.env.AGENTBMAN_CALLBACK_URL || '';
   let transferNumber = queryParams.transfer_number || process.env.DEFAULT_TRANSFER_NUMBER || '';
 
@@ -82,6 +84,8 @@ wss.on('connection', (ws, req) => {
         if (customParams.c)                campaignId     = customParams.c;
         if (customParams.e)                email          = customParams.e;
         if (customParams.direction)        callDirection  = customParams.direction;
+        if (customParams.script_id)        scriptId       = customParams.script_id;
+        if (customParams.script_text)      customScript   = decodeURIComponent(customParams.script_text);
         if (customParams.callback_url)     callbackUrl    = customParams.callback_url;
         if (customParams.transfer_number)  transferNumber = customParams.transfer_number;
 
@@ -226,7 +230,16 @@ OBJECTION: Already handled / not interested
 "Completely understand. Thanks for taking the call — have a wonderful day."
 (End call. Do NOT call any functions.)`;
 
-          const prompt = isInbound ? inboundPrompt : outboundPrompt;
+          // Use custom script if passed from Base44, otherwise use defaults
+          const prompt = customScript
+            ? customScript.replace(/\{firstName\}/g, firstName)
+            : isInbound ? inboundPrompt : outboundPrompt;
+
+          if (customScript) {
+            console.log(`[SCRIPT] Using custom script (${customScript.length} chars) | id=${scriptId}`);
+          } else {
+            console.log(`[SCRIPT] Using default ${isInbound ? 'inbound' : 'outbound'} script`);
+          }
 
           // ── Deepgram Settings ───────────────────────────────────────────────────
           dgWs.send(JSON.stringify({
