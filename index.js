@@ -9,30 +9,40 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('[START] Orion Engine Running');
-console.log('[VERSION] Build v3 — Deepgram STT + gpt-4o-mini + Cartesia TTS + AgentBman Sync + Inbound Support');
+console.log('[VERSION] Build v4 — Deepgram STT + gpt-4o-mini + Dynamic Voice (Deepgram Aura-2 / Cartesia managed) + AgentBman Sync + Multi-tenant + Inbound Support');
 
 process.on('uncaughtException',  (err)    => console.error('[CRIT] CRITICAL ERROR:', err));
 process.on('unhandledRejection', (reason) => console.error('[WARN] UNHANDLED REJECTION:', reason));
 
 app.get('/health', (req, res) => res.status(200).send('Orion Engine Live'));
 
+// ── Each connection is a fully isolated scope ─────────────────────────────────
+// 100 simultaneous calls = 100 independent closures. No shared state.
 wss.on('connection', (ws, req) => {
-  // ── Read initial params from WebSocket query string (fallback only) ──────────
-  // NOTE: The real values come from TwiML <Parameter> tags in the 'start' event.
-  // These query string values are only used if customParameters is empty.
+
+  // ── Initial params from WebSocket query string (fallback only) ───────────────
+  // The real values come from TwiML <Parameter> tags in the 'start' event.
   const queryParams  = url.parse(req.url, true).query;
-  let leadId         = queryParams.l            || 'unknown';
-  let campaignId     = queryParams.c            || 'unknown';
-  let firstName      = queryParams.f            || 'there';
-  let email          = queryParams.e            || '';
-  let callDirection  = queryParams.direction    || 'outbound';
-  let scriptId       = queryParams.script_id    || '';
-  let customScript   = queryParams.script_text  || '';
-  let callbackUrl    = queryParams.callback_url || process.env.AGENTBMAN_CALLBACK_URL || '';
+
+  let leadId         = queryParams.l               || 'unknown';
+  let campaignId     = queryParams.c               || 'unknown';
+  let firstName      = queryParams.f               || 'there';
+  let email          = queryParams.e               || '';
+  let callDirection  = queryParams.direction       || 'outbound';
+  let scriptId       = queryParams.script_id       || '';
+  let customScript   = queryParams.script_text     || '';
+  let callbackUrl    = queryParams.callback_url    || process.env.AGENTBMAN_CALLBACK_URL || '';
   let transferNumber = queryParams.transfer_number || process.env.DEFAULT_TRANSFER_NUMBER || '';
+
+  // Voice — overridden per-call via TwiML params from twilioWebhook
+  // which reads org SystemSettings so each org gets their chosen voice
+  let voiceId       = queryParams.voice_id       || 'aura-2-thalia-en';
+  let voiceProvider = queryParams.voice_provider || 'deepgram';
+  let voiceModel    = queryParams.voice_model    || 'aura-2-thalia-en';
 
   const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
 
+  // Per-connection state — completely isolated from all other calls
   let dgWs               = null;
   let streamSid          = null;
   let keepAliveInterval  = null;
@@ -40,10 +50,10 @@ wss.on('connection', (ws, req) => {
   let callOutcome        = 'completed';
   let callEndedNotified  = false;
 
-  // ── Helper: POST back to AgentBman postCallSync ───────────────────────────────
+  // ── POST back to AgentBman postCallSync ───────────────────────────────────────
   async function notifyAgentBman(tool, params = {}) {
     if (!callbackUrl) {
-      console.warn(`[CALLBACK] No callback URL set — cannot notify AgentBman of "${tool}"`);
+      console.warn(`[CALLBACK] No callback URL — cannot notify AgentBman of "${tool}"`);
       return;
     }
     try {
@@ -66,6 +76,30 @@ wss.on('connection', (ws, req) => {
     }
   }
 
+  // ── Build Deepgram speak block ────────────────────────────────────────────────
+  // Deepgram manages both Aura-2 and Cartesia natively — no separate API keys.
+  // Both are included in the $4.50/hr flat rate.
+  function buildSpeakBlock(provider, model, id) {
+    if (provider === 'cartesia') {
+      // Deepgram managed Cartesia — sonic-2 or sonic-3
+      // No endpoint block, no Cartesia API key needed
+      return {
+        provider: {
+          type:     'cartesia',
+          model_id: model,  // 'sonic-2' or 'sonic-3'
+          voice_id: id,     // UUID from Cartesia voice library
+        }
+      };
+    }
+    // Default: Deepgram Aura-2 native TTS
+    return {
+      provider: {
+        type:  'deepgram',
+        model: model,  // e.g. 'aura-2-thalia-en'
+      }
+    };
+  }
+
   ws.on('message', async (message) => {
     try {
       const msg = JSON.parse(message);
@@ -74,27 +108,41 @@ wss.on('connection', (ws, req) => {
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
 
-        // BUG FIX: Read params from TwiML <Parameter> tags, not just query string.
-        // customParameters is where Twilio puts values from <Stream><Parameter> tags.
+        // customParameters contains values from TwiML <Stream><Parameter> tags.
+        // These are set by twilioWebhook.ts which reads from each org's SystemSettings.
+        // This is how per-org voice selection and per-call context are delivered.
         const customParams = msg.start.customParameters || {};
 
-        // Override with customParams values — these are the authoritative source
-        if (customParams.f)                firstName      = customParams.f;
-        if (customParams.l)                leadId         = customParams.l;
-        if (customParams.c)                campaignId     = customParams.c;
-        if (customParams.e)                email          = customParams.e;
-        if (customParams.direction)        callDirection  = customParams.direction;
-        if (customParams.script_id)        scriptId       = customParams.script_id;
-        if (customParams.script_text)      customScript   = decodeURIComponent(customParams.script_text);
-        if (customParams.callback_url)     callbackUrl    = customParams.callback_url;
-        if (customParams.transfer_number)  transferNumber = customParams.transfer_number;
+        // Call context
+        if (customParams.f)               firstName      = customParams.f;
+        if (customParams.l)               leadId         = customParams.l;
+        if (customParams.c)               campaignId     = customParams.c;
+        if (customParams.e)               email          = customParams.e;
+        if (customParams.direction)       callDirection  = customParams.direction;
+        if (customParams.script_id)       scriptId       = customParams.script_id;
+        if (customParams.script_text)     customScript   = decodeURIComponent(customParams.script_text);
+        if (customParams.callback_url)    callbackUrl    = customParams.callback_url;
+        if (customParams.transfer_number) transferNumber = customParams.transfer_number;
+
+        // Voice — read from org SystemSettings via twilioWebhook
+        // Superusers can set cartesia_sonic3_voice_id which overrides everything
+        if (customParams.voice_id)       voiceId       = customParams.voice_id;
+        if (customParams.voice_provider) voiceProvider = customParams.voice_provider;
+        if (customParams.voice_model)    voiceModel    = customParams.voice_model;
 
         const isInbound = callDirection === 'inbound';
 
         console.log(`[START] Stream: ${streamSid} | Lead: ${leadId} | Name: ${firstName} | Direction: ${callDirection}`);
         console.log(`[CONFIG] Campaign: ${campaignId} | Email: ${email}`);
-        console.log(`[CONFIG] Callback: ${callbackUrl  || 'NOT SET'}`);
+        console.log(`[CONFIG] Callback: ${callbackUrl    || 'NOT SET'}`);
         console.log(`[CONFIG] Transfer#: ${transferNumber || 'NOT SET'}`);
+        console.log(`[VOICE]  Provider: ${voiceProvider} | Model: ${voiceModel} | ID: ${voiceId}`);
+
+        if (!deepgramApiKey) {
+          console.error('[ERROR] DEEPGRAM_API_KEY not set — cannot connect to Deepgram');
+          ws.close(1011, 'Deepgram API key not configured');
+          return;
+        }
 
         // ── Connect to Deepgram Voice Agent ───────────────────────────────────────
         dgWs = new WebSocket('wss://agent.deepgram.com/v1/agent/converse', {
@@ -102,7 +150,7 @@ wss.on('connection', (ws, req) => {
         });
 
         dgWs.on('open', () => {
-          console.log(`[DG] Connected to Deepgram | Lead: ${leadId} | Direction: ${callDirection}`);
+          console.log(`[DG] Connected | Lead: ${leadId} | Direction: ${callDirection} | Voice: ${voiceProvider}/${voiceId}`);
 
           keepAliveInterval = setInterval(() => {
             if (dgWs && dgWs.readyState === WebSocket.OPEN) {
@@ -110,7 +158,9 @@ wss.on('connection', (ws, req) => {
             }
           }, 5000);
 
-          // ── Prompts: separate for inbound vs outbound ───────────────────────────
+          // ── Prompts ─────────────────────────────────────────────────────────────
+          // These are FALLBACKS only — used when no custom script is assigned
+          // to the campaign. The AI Agent Studio scripts are the primary path.
           const outboundPrompt = `You are Jordan, a sharp personable energy consultant calling homeowners. You sound completely human — relaxed, confident, direct. Short sentences. Natural rhythm. Never stiff or scripted.
 
 RULES — never break these:
@@ -199,18 +249,21 @@ OBJECTION: Already handled / not interested
 "Completely understand. Thanks for taking the call — have a wonderful day."
 (End call. Do NOT call any functions.)`;
 
-          // Use custom script if passed from Base44, otherwise use defaults
+          // Primary path: custom script from AI Agent Studio (assigned per campaign).
+          // Fallback: hardcoded Jordan (outbound) or Alex (inbound) prompts above.
           const prompt = customScript
             ? customScript.replace(/\{firstName\}/g, firstName)
             : isInbound ? inboundPrompt : outboundPrompt;
 
           if (customScript) {
-            console.log(`[SCRIPT] Using custom script (${customScript.length} chars) | id=${scriptId}`);
+            console.log(`[SCRIPT] Custom script (${customScript.length} chars) | id=${scriptId}`);
           } else {
-            console.log(`[SCRIPT] Using default ${isInbound ? 'inbound' : 'outbound'} script`);
+            console.log(`[SCRIPT] Fallback ${isInbound ? 'inbound (Alex)' : 'outbound (Jordan)'} script`);
           }
 
-          // ── Deepgram Settings ───────────────────────────────────────────────────
+          // ── Send Settings to Deepgram ───────────────────────────────────────────
+          const speakBlock = buildSpeakBlock(voiceProvider, voiceModel, voiceId);
+
           dgWs.send(JSON.stringify({
             type: 'Settings',
             audio: {
@@ -264,25 +317,17 @@ OBJECTION: Already handled / not interested
                   }
                 ]
               },
-              speak: {
-                provider: {
-                  type:     'cartesia',
-                  model_id: 'sonic-2',
-                  voice:    { mode: 'id', id: 'f9836c6e-a0bd-460e-9d3c-f7299fa60f94' },
-                  language: 'en'
-                },
-                endpoint: {
-                  url:     'https://api.cartesia.ai/tts/bytes',
-                  headers: { 'x-api-key': process.env.CARTESIA_API_KEY }
-                }
-              }
+              speak: speakBlock
             }
           }));
+
+          console.log(`[DG] Settings sent — speak: ${JSON.stringify(speakBlock)}`);
+
         }); // end dgWs.on('open')
 
         // ── Deepgram Messages ───────────────────────────────────────────────────
         dgWs.on('message', async (data, isBinary) => {
-          // Binary = TTS audio — forward to Twilio
+          // Binary = TTS audio — forward directly to Twilio
           if (isBinary) {
             if (ws.readyState === WebSocket.OPEN && streamSid) {
               ws.send(JSON.stringify({
@@ -305,14 +350,14 @@ OBJECTION: Already handled / not interested
 
               transcriptBuffer.push(`[${role.toUpperCase()}]: ${line}`);
 
-              // Stream to AgentBman real-time (fire and forget)
+              // Real-time transcript stream to AgentBman (fire and forget)
               notifyAgentBman('transcript_update', {
                 transcript_line: line,
                 speaker: role === 'user' ? 'lead' : 'agent',
               });
             }
 
-            // ── AI function call triggered ──────────────────────────────────────
+            // ── AI function calls ───────────────────────────────────────────────
             if (dgMsg.type === 'FunctionCallRequest') {
               const calls = dgMsg.functions || [];
 
@@ -330,10 +375,10 @@ OBJECTION: Already handled / not interested
                   callOutcome = 'appointment_booked';
                 }
 
-                // Notify AgentBman (await so we know it was received)
+                // Notify AgentBman — await so we know it landed
                 await notifyAgentBman(call.name, callArgs);
 
-                // Confirm function result back to Deepgram so it continues
+                // Confirm result back to Deepgram so conversation continues
                 dgWs.send(JSON.stringify({
                   type:    'FunctionCallResponse',
                   id:      call.id,
@@ -352,7 +397,9 @@ OBJECTION: Already handled / not interested
           }
         }); // end dgWs.on('message')
 
-        dgWs.on('error', (e) => console.error('[ERROR] Deepgram WS Error:', e.message));
+        dgWs.on('error', (e) => {
+          console.error('[ERROR] Deepgram WS Error:', e.message);
+        });
 
         dgWs.on('close', (code, reason) => {
           console.log('[CLOSE] Deepgram closed:', code, '|', reason ? reason.toString() : 'none');
@@ -361,7 +408,7 @@ OBJECTION: Already handled / not interested
 
       } // end msg.event === 'start'
 
-      // ── STT audio from Twilio → forward to Deepgram ───────────────────────────
+      // ── STT audio: Twilio → Deepgram ─────────────────────────────────────────
       if (msg.event === 'media' && dgWs && dgWs.readyState === WebSocket.OPEN) {
         const audioBuffer = Buffer.from(msg.media.payload, 'base64');
         if (audioBuffer.length > 0) dgWs.send(audioBuffer);
@@ -391,12 +438,13 @@ OBJECTION: Already handled / not interested
     }
   }); // end ws.on('message')
 
+  // ── Client disconnected (abrupt hangup) ────────────────────────────────────
   ws.on('close', () => {
     console.log('[DISC] Client WebSocket disconnected');
 
     if (keepAliveInterval) clearInterval(keepAliveInterval);
 
-    // Fire call_ended if not already sent (e.g. abrupt disconnect)
+    // Fire call_ended if not already sent
     if (!callEndedNotified) {
       callEndedNotified = true;
       notifyAgentBman('call_ended', {
@@ -414,9 +462,11 @@ OBJECTION: Already handled / not interested
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[START] Orion Engine Running on Port ${PORT}`);
-  console.log(`[CONFIG] AGENTBMAN_CALLBACK_URL:  ${process.env.AGENTBMAN_CALLBACK_URL  || 'NOT SET — set this env var on Render'}`);
+  console.log(`[START] Orion Engine listening on port ${PORT}`);
+  console.log(`[CONFIG] AGENTBMAN_CALLBACK_URL:  ${process.env.AGENTBMAN_CALLBACK_URL  || 'NOT SET'}`);
   console.log(`[CONFIG] DEFAULT_TRANSFER_NUMBER: ${process.env.DEFAULT_TRANSFER_NUMBER || 'NOT SET'}`);
-  console.log(`[CONFIG] DEEPGRAM_API_KEY:        ${process.env.DEEPGRAM_API_KEY  ? 'SET' : 'NOT SET'}`);
-  console.log(`[CONFIG] CARTESIA_API_KEY:        ${process.env.CARTESIA_API_KEY  ? 'SET' : 'NOT SET'}`);
+  console.log(`[CONFIG] DEEPGRAM_API_KEY:        ${process.env.DEEPGRAM_API_KEY        ? 'SET' : 'NOT SET ⚠️'}`);
+  console.log('[CONFIG] CARTESIA_API_KEY:        NOT NEEDED — Cartesia managed by Deepgram');
+  console.log('[INFO]   Voice selection per org via AgentBman SystemSettings → twilioWebhook → TwiML params');
+  console.log('[INFO]   Multiple concurrent calls fully isolated — no shared state between connections');
 });
